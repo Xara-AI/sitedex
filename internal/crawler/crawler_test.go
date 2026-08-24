@@ -55,6 +55,10 @@ func testCrawlConfig(userAgent string) config.CrawlConfig {
 	}
 }
 
+func testChunkConfig() config.ChunkingConfig {
+	return config.ChunkingConfig{TargetChars: 1200, OverlapChars: 100}
+}
+
 func TestCrawler_BasicBFSAndExtraction(t *testing.T) {
 	var baseURL string
 	mux := http.NewServeMux()
@@ -75,7 +79,7 @@ func TestCrawler_BasicBFSAndExtraction(t *testing.T) {
 	baseURL = srv.URL
 
 	writer := newRecordingWriter()
-	c := New(testCrawlConfig("sitedex-test"), t.TempDir(), writer, nil)
+	c := New(testCrawlConfig("sitedex-test"), testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	res, err := c.Crawl(context.Background(), srv.URL+"/")
 	if err != nil {
@@ -110,7 +114,7 @@ func TestCrawler_RespectsRobotsDisallow(t *testing.T) {
 	baseURL = srv.URL
 
 	writer := newRecordingWriter()
-	c := New(testCrawlConfig("sitedex-test"), t.TempDir(), writer, nil)
+	c := New(testCrawlConfig("sitedex-test"), testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	if _, err := c.Crawl(context.Background(), srv.URL+"/"); err != nil {
 		t.Fatalf("Crawl: %v", err)
@@ -141,7 +145,7 @@ func TestCrawler_UsesSitemapURLs(t *testing.T) {
 	baseURL = srv.URL
 
 	writer := newRecordingWriter()
-	c := New(testCrawlConfig("sitedex-test"), t.TempDir(), writer, nil)
+	c := New(testCrawlConfig("sitedex-test"), testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	if _, err := c.Crawl(context.Background(), srv.URL+"/"); err != nil {
 		t.Fatalf("Crawl: %v", err)
@@ -172,7 +176,7 @@ func TestCrawler_RedirectLoopDoesNotHangCrawl(t *testing.T) {
 	defer srv.Close()
 
 	writer := newRecordingWriter()
-	c := New(testCrawlConfig("sitedex-test"), t.TempDir(), writer, nil)
+	c := New(testCrawlConfig("sitedex-test"), testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	done := make(chan struct{})
 	var res *Result
@@ -222,7 +226,7 @@ func TestCrawler_ETagRevalidationSkipsUnchangedOnSecondCrawl(t *testing.T) {
 	dataDir := t.TempDir()
 	writer := newRecordingWriter()
 
-	c1 := New(testCrawlConfig("sitedex-test"), dataDir, writer, nil)
+	c1 := New(testCrawlConfig("sitedex-test"), testChunkConfig(), dataDir, writer, nil, nil)
 	res1, err := c1.Crawl(context.Background(), srv.URL+"/")
 	if err != nil {
 		t.Fatalf("first Crawl: %v", err)
@@ -231,7 +235,7 @@ func TestCrawler_ETagRevalidationSkipsUnchangedOnSecondCrawl(t *testing.T) {
 		t.Fatalf("first crawl PagesFetched = %d, want 1", res1.PagesFetched)
 	}
 
-	c2 := New(testCrawlConfig("sitedex-test"), dataDir, writer, nil)
+	c2 := New(testCrawlConfig("sitedex-test"), testChunkConfig(), dataDir, writer, nil, nil)
 	res2, err := c2.Crawl(context.Background(), srv.URL+"/")
 	if err != nil {
 		t.Fatalf("second Crawl: %v", err)
@@ -272,7 +276,7 @@ func TestCrawler_MaxPagesLimit(t *testing.T) {
 	cfg := testCrawlConfig("sitedex-test")
 	cfg.MaxPages = 3
 	writer := newRecordingWriter()
-	c := New(cfg, t.TempDir(), writer, nil)
+	c := New(cfg, testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	res, err := c.Crawl(context.Background(), srv.URL+"/p0")
 	if err != nil {
@@ -311,7 +315,7 @@ func TestCrawler_RateLimitIsHonored(t *testing.T) {
 	cfg := testCrawlConfig("sitedex-test")
 	cfg.RateLimitRPS = 20 // 50ms between requests to this host
 	writer := newRecordingWriter()
-	c := New(cfg, t.TempDir(), writer, nil)
+	c := New(cfg, testChunkConfig(), t.TempDir(), writer, nil, nil)
 
 	start := time.Now()
 	res, err := c.Crawl(context.Background(), srv.URL+"/")

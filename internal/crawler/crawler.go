@@ -30,52 +30,108 @@ type PageWriter interface {
 	WritePage(kbDir string, pageURL *url.URL, page *content.Page) (relPath string, err error)
 }
 
+// Indexer persists one page's searchable content (metadata + chunks) into
+// the site's index. It's an interface for the same reason PageWriter is:
+// the crawler doesn't need to know about SQLite, and tests can substitute
+// an in-memory recorder. nil is valid — indexing is then simply skipped
+// (e.g. for callers that only want the markdown export).
+type Indexer interface {
+	IndexPage(page PageForIndex, chunks []ChunkForIndex) error
+}
+
+// PageForIndex and ChunkForIndex mirror internal/index's PageRecord/
+// ChunkRecord shapes without the crawler package depending on
+// internal/index directly (same decoupling reasoning as PageWriter).
+type PageForIndex struct {
+	URL          string
+	Title        string
+	Description  string
+	Lang         string
+	Hash         string
+	CrawledAt    time.Time
+	ETag         string
+	LastModified string
+}
+
+type ChunkForIndex struct {
+	Ordinal     int
+	HeadingPath string
+	Text        string
+}
+
 // Logf is a minimal structured-ish logging hook; nil is fine (silent).
 type Logf func(format string, args ...any)
 
 // Crawler crawls one site: robots.txt + sitemap discovery, BFS traversal
-// within scope, conditional revalidation, content extraction, and
-// markdown export.
+// within scope, conditional revalidation, content extraction, markdown
+// export, and search indexing.
 type Crawler struct {
-	cfg     config.CrawlConfig
-	dataDir string
-	client  *http.Client
-	writer  PageWriter
-	log     Logf
+	cfg      config.CrawlConfig
+	chunking config.ChunkingConfig
+	dataDir  string
+	client   *http.Client
+	writer   PageWriter
+	indexer  Indexer
+	log      Logf
 }
 
-// New builds a Crawler from the crawl section of the config and the
-// data_dir it should write into.
-func New(cfg config.CrawlConfig, dataDir string, writer PageWriter, log Logf) *Crawler {
+// New builds a Crawler from the crawl/chunking sections of the config and
+// the data_dir it should write into. indexer may be nil to skip indexing
+// (markdown-only crawl).
+func New(cfg config.CrawlConfig, chunking config.ChunkingConfig, dataDir string, writer PageWriter, indexer Indexer, log Logf) *Crawler {
 	if log == nil {
 		log = func(string, ...any) {}
 	}
 	return &Crawler{
-		cfg:     cfg,
-		dataDir: dataDir,
-		client:  NewHTTPClient(),
-		writer:  writer,
-		log:     log,
+		cfg:      cfg,
+		chunking: chunking,
+		dataDir:  dataDir,
+		client:   NewHTTPClient(),
+		writer:   writer,
+		indexer:  indexer,
+		log:      log,
 	}
 }
 
-// Crawl crawls siteURL to completion (or until ctx is canceled), writing
-// markdown pages via the configured PageWriter and persisting revalidation
-// state to <data_dir>/<site>/crawl-state.json.
-func (c *Crawler) Crawl(ctx context.Context, siteURL string) (*Result, error) {
-	start := time.Now()
-
-	seed, err := url.Parse(siteURL)
+// parseSeedURL parses and normalizes a user-supplied site URL, defaulting
+// to https:// when no scheme is given.
+func parseSeedURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse site URL: %w", err)
 	}
-	if seed.Scheme == "" {
-		seed.Scheme = "https"
+	if u.Scheme == "" {
+		u.Scheme = "https"
 	}
-	if seed.Host == "" {
-		return nil, fmt.Errorf("site URL %q has no host", siteURL)
+	if u.Host == "" {
+		return nil, fmt.Errorf("site URL %q has no host", rawURL)
 	}
-	seed = NormalizeURL(seed)
+	return NormalizeURL(u), nil
+}
+
+// SiteForURL returns the registrable-domain identifier sitedex uses as a
+// site's data-dir key, e.g. "https://shop.example.com/x" -> "example.com".
+// Callers that need to open a site's index before/independent of a crawl
+// (e.g. the CLI) use this to resolve the same key Crawl uses internally.
+func SiteForURL(rawURL string) (string, error) {
+	u, err := parseSeedURL(rawURL)
+	if err != nil {
+		return "", err
+	}
+	return RegistrableDomain(u.Host), nil
+}
+
+// Crawl crawls siteURL to completion (or until ctx is canceled), writing
+// markdown pages via the configured PageWriter, indexing them via the
+// configured Indexer, and persisting revalidation state to
+// <data_dir>/<site>/crawl-state.json.
+func (c *Crawler) Crawl(ctx context.Context, siteURL string) (*Result, error) {
+	start := time.Now()
+
+	seed, err := parseSeedURL(siteURL)
+	if err != nil {
+		return nil, err
+	}
 
 	site := RegistrableDomain(seed.Host)
 	kbDir := c.dataDir + "/" + site + "/kb"
@@ -205,6 +261,22 @@ func (c *Crawler) fetchAndProcess(ctx context.Context, u *url.URL, state *StateS
 	if _, err := c.writer.WritePage(kbDir, u, page); err != nil {
 		return nil, false, fmt.Errorf("write page: %w", err)
 	}
+
+	if c.indexer != nil {
+		chunks := content.ChunkPage(page, c.chunking.TargetChars, c.chunking.OverlapChars)
+		idxChunks := make([]ChunkForIndex, len(chunks))
+		for i, ch := range chunks {
+			idxChunks[i] = ChunkForIndex{Ordinal: ch.Ordinal, HeadingPath: ch.HeadingPath, Text: ch.Text}
+		}
+		idxPage := PageForIndex{
+			URL: page.URL, Title: page.Title, Description: page.Description, Lang: page.Lang,
+			Hash: page.Hash, CrawledAt: page.CrawledAt, ETag: res.ETag, LastModified: res.LastModified,
+		}
+		if err := c.indexer.IndexPage(idxPage, idxChunks); err != nil {
+			return nil, false, fmt.Errorf("index page: %w", err)
+		}
+	}
+
 	state.Set(key, PageState{ETag: res.ETag, LastModified: res.LastModified, Hash: page.Hash, CrawledAt: time.Now().UTC()})
 
 	return links, true, nil

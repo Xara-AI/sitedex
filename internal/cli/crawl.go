@@ -14,6 +14,7 @@ import (
 	"github.com/Xara-AI/sitedex/internal/crawler"
 	"github.com/Xara-AI/sitedex/internal/export"
 	"github.com/Xara-AI/sitedex/internal/extract/content"
+	"github.com/Xara-AI/sitedex/internal/index"
 )
 
 // exportWriter adapts export.WritePage to the crawler.PageWriter
@@ -23,6 +24,23 @@ type exportWriter struct{}
 
 func (exportWriter) WritePage(kbDir string, pageURL *url.URL, page *content.Page) (string, error) {
 	return export.WritePage(kbDir, pageURL, page)
+}
+
+// indexAdapter adapts an *index.DB to the crawler.Indexer interface, for
+// the same reason exportWriter exists: internal/crawler stays decoupled
+// from internal/index's concrete types.
+type indexAdapter struct{ db *index.DB }
+
+func (a indexAdapter) IndexPage(page crawler.PageForIndex, chunks []crawler.ChunkForIndex) error {
+	rec := index.PageRecord{
+		URL: page.URL, Title: page.Title, Description: page.Description, Lang: page.Lang,
+		Hash: page.Hash, CrawledAt: page.CrawledAt, ETag: page.ETag, LastModified: page.LastModified,
+	}
+	chunkRecs := make([]index.ChunkRecord, len(chunks))
+	for i, c := range chunks {
+		chunkRecs[i] = index.ChunkRecord{Ordinal: c.Ordinal, HeadingPath: c.HeadingPath, Text: c.Text}
+	}
+	return a.db.IndexPage(rec, chunkRecs)
 }
 
 func runCrawl(args []string, stdout, stderr io.Writer) error {
@@ -47,13 +65,23 @@ func runCrawl(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	siteKey, err := crawler.SiteForURL(*site)
+	if err != nil {
+		return err
+	}
+	idx, err := index.Open(cfg.DataDir, siteKey)
+	if err != nil {
+		return fmt.Errorf("open index: %w", err)
+	}
+	defer func() { _ = idx.Close() }()
+
 	// A crawl of up to max_pages at rate_limit_rps can run for a while;
 	// let Ctrl-C (or a container's SIGTERM) stop it cleanly, saving
-	// whatever revalidation state has accumulated so far.
+	// whatever revalidation state and index writes have accumulated.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	c := crawler.New(cfg.Crawl, cfg.DataDir, exportWriter{}, func(format string, a ...any) {
+	c := crawler.New(cfg.Crawl, cfg.Chunking, cfg.DataDir, exportWriter{}, indexAdapter{idx}, func(format string, a ...any) {
 		_, _ = fmt.Fprintf(stderr, format+"\n", a...)
 	})
 

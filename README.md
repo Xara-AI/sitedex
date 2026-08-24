@@ -3,15 +3,17 @@
 Turn any website into a clean, chunked, RAG-ready knowledge base — and a
 fast product/content search API — with one binary.
 
-**Status: early development.** `crawl` and `export --format md` work today:
-point `sitedex crawl` at a site and it respects robots.txt, discovers pages
-via sitemap.xml and links, and writes clean per-page markdown (with YAML
-frontmatter and a heading outline) into `<data_dir>/<site>/kb/`. Indexing,
-search, product extraction, and the HTTP API are not implemented yet — see
-`sitedex <command> -h` output, which says exactly what's missing and which
-milestone lands it. This note will be replaced with a full README
-(quickstart, API reference, extraction chain, platform support table,
-limitations) once search and product extraction land.
+**Status: early development.** `crawl`, `search`, `sites`, and `export`
+(both `md` and `jsonl`) all work today: point `sitedex crawl` at a site and
+it respects robots.txt, discovers pages via sitemap.xml and links, writes
+clean per-page markdown (with YAML frontmatter and a heading outline) into
+`<data_dir>/<site>/kb/`, and indexes it into a per-site SQLite FTS5 index
+for full-text search — including Romanian-diacritic-insensitive matching.
+Product extraction, the live HTTP API, and `--fresh` live-verification are
+not implemented yet — see `sitedex <command> -h` output, which says exactly
+what's missing and which milestone lands it. This note will be replaced
+with a full README (quickstart, API reference, extraction chain, platform
+support table, limitations) once product extraction and the HTTP API land.
 
 ## Build
 

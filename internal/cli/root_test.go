@@ -139,6 +139,91 @@ func TestRun_CrawlThenExportMD(t *testing.T) {
 	}
 }
 
+func TestRun_CrawlThenExportJSONL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/sitemap.xml", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><main><h1>Blue Shoes</h1><p>Lightweight running shoes in blue, long enough to clear the density threshold.</p></main></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	configPath := writeTestConfig(t, dataDir)
+
+	if code, _, stderr := run(t, "crawl", "--site", srv.URL+"/", "--config", configPath); code != 0 {
+		t.Fatalf("crawl code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	site, _, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	outDir := t.TempDir()
+	code, stdout, stderr := run(t, "export", "--site", site, "--format", "jsonl", "--out", outDir, "--config", configPath)
+	if code != 0 {
+		t.Fatalf("export code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "records=1") {
+		t.Errorf("stdout = %q, want records=1", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, site+".jsonl")); err != nil {
+		t.Errorf("expected exported %s.jsonl: %v", site, err)
+	}
+}
+
+func TestRun_CrawlThenSearch(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/sitemap.xml", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><main><h1>Blue Nike Shoes</h1><p>Lightweight running shoes in blue, built for long distances.</p></main></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	configPath := writeTestConfig(t, dataDir)
+
+	if code, _, stderr := run(t, "crawl", "--site", srv.URL+"/", "--config", configPath); code != 0 {
+		t.Fatalf("crawl code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	site, _, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+
+	code, stdout, stderr := run(t, "search", "--site", site, "--query", "blue shoes", "--config", configPath)
+	if code != 0 {
+		t.Fatalf("search code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "Blue Nike Shoes") {
+		t.Errorf("stdout = %q, want it to mention the matched page's title", stdout)
+	}
+
+	// sites should now list this one site with 1 page.
+	code, stdout, stderr = run(t, "sites", "--config", configPath)
+	if code != 0 {
+		t.Fatalf("sites code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, site) {
+		t.Errorf("sites stdout = %q, want it to list %s", stdout, site)
+	}
+}
+
+func TestRun_SearchOnUncrawledSiteErrors(t *testing.T) {
+	configPath := writeTestConfig(t, t.TempDir())
+	code, _, stderr := run(t, "search", "--site", "never-crawled.example", "--query", "anything", "--config", configPath)
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "no index found") {
+		t.Errorf("stderr = %q, want a no-index-found error", stderr)
+	}
+}
+
 func TestRun_SearchRequiresSiteAndQuery(t *testing.T) {
 	code, _, stderr := run(t, "search", "--site", "example.com")
 	if code != 1 {

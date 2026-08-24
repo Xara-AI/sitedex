@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/Xara-AI/sitedex/internal/config"
+	"github.com/Xara-AI/sitedex/internal/search"
 )
 
 func runSearch(args []string, stdout, stderr io.Writer) error {
@@ -37,8 +38,29 @@ func runSearch(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// TODO(M3): FTS5 warm-path search in internal/search. TODO(M5): --fresh
-	// live verification against cfg.Search.FreshTimeoutMS budget.
-	_, _ = fmt.Fprintf(stdout, "search: not implemented yet (target milestone M3); site=%s query=%q fresh=%v limit=%d data_dir=%s\n", *site, *query, *fresh, *limit, cfg.DataDir)
+	if *fresh {
+		// TODO(M5): live re-verification of top results within
+		// search.fresh_timeout_ms, per CLAUDE.md's "Search" section.
+		_, _ = fmt.Fprintln(stderr, "search: --fresh not implemented yet (target milestone M5); returning index-only results")
+	}
+
+	results, err := search.New(cfg.DataDir).Search(*site, *query, *limit)
+	if err != nil {
+		return err
+	}
+
+	if len(results) == 0 {
+		_, _ = fmt.Fprintln(stdout, "no results")
+		return nil
+	}
+	for i, r := range results {
+		_, _ = fmt.Fprintf(stdout, "%d. %s  (score %.2f)\n   %s\n", i+1, r.Title, r.Score, r.URL)
+		if r.HeadingPath != "" {
+			_, _ = fmt.Fprintf(stdout, "   %s\n", r.HeadingPath)
+		}
+		if r.Snippet != "" {
+			_, _ = fmt.Fprintf(stdout, "   %s\n", r.Snippet)
+		}
+	}
 	return nil
 }

@@ -38,10 +38,11 @@ func runExport(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if *format == "jsonl" {
-		// TODO(M3): JSONL export needs the SQLite index (chunks/products
-		// tables) as its source; markdown export below doesn't depend on
-		// it since the crawler writes kb/*.md directly.
-		_, _ = fmt.Fprintf(stdout, "export: --format jsonl not implemented yet (target milestone M3); site=%s data_dir=%s\n", *site, cfg.DataDir)
+		n, err := export.ExportJSONL(cfg.DataDir, *site, *out)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(stdout, "export complete: site=%s format=jsonl out=%s records=%d\n", *site, *out, n)
 		return nil
 	}
 
