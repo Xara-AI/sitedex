@@ -35,12 +35,12 @@ func (s *Server) handleCrawlTrigger(serveCtx context.Context, w http.ResponseWri
 // handleCrawlStatus serves GET /v1/crawl/{job}.
 func (s *Server) handleCrawlStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("job")
-	j, ok := s.jobs.get(id)
+	dto, ok := s.jobs.statusDTO(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, "unknown job")
 		return
 	}
-	writeJSON(w, http.StatusOK, j.toDTO())
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // runCrawlJob runs one crawl to completion, updating the job tracker and

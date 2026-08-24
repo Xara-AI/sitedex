@@ -42,13 +42,17 @@ func testServer(t *testing.T, cfg *config.Config) (baseURL string, stop func()) 
 
 	stop = func() {
 		cancel()
+		// serve()'s own internal shutdown grace period is 15s (see
+		// server.go); this must wait comfortably longer than that or a
+		// legitimate (if slow) graceful shutdown fails the test instead
+		// of a genuine hang. 20s under -race/loaded CI runners, not 5s.
 		select {
 		case err := <-done:
 			if err != nil {
 				t.Errorf("serve() returned error after shutdown: %v", err)
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("serve() did not return within 5s of context cancellation")
+		case <-time.After(20 * time.Second):
+			t.Fatal("serve() did not return within 20s of context cancellation")
 		}
 	}
 	return "http://" + ln.Addr().String(), stop
@@ -302,7 +306,7 @@ func TestServer_Metrics(t *testing.T) {
 	defer stop()
 
 	// Generate at least one search so the counters are non-zero.
-	resp, err := http.Post(base+"/v1/search", "application/json", bytes.NewBufferString(`{"site":"x","query":"y"}`))
+	resp, err := http.Post(base+"/v1/search", "application/json", bytes.NewBufferString(`{"site":"nonexistent.invalid","query":"y"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +336,7 @@ func TestServer_AuthRequiredWhenTokenSet(t *testing.T) {
 	defer stop()
 
 	// No Authorization header: rejected.
-	resp, err := http.Post(base+"/v1/search", "application/json", bytes.NewBufferString(`{"site":"x","query":"y"}`))
+	resp, err := http.Post(base+"/v1/search", "application/json", bytes.NewBufferString(`{"site":"nonexistent.invalid","query":"y"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +356,7 @@ func TestServer_AuthRequiredWhenTokenSet(t *testing.T) {
 	}
 
 	// Correct bearer token: allowed.
-	req, _ := http.NewRequest(http.MethodPost, base+"/v1/search", bytes.NewBufferString(`{"site":"x","query":"y"}`))
+	req, _ := http.NewRequest(http.MethodPost, base+"/v1/search", bytes.NewBufferString(`{"site":"nonexistent.invalid","query":"y"}`))
 	req.Header.Set("Authorization", "Bearer secret123")
 	req.Header.Set("Content-Type", "application/json")
 	aresp, err := http.DefaultClient.Do(req)

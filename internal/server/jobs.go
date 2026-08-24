@@ -52,11 +52,18 @@ func (t *jobTracker) create(site string) *job {
 	return j
 }
 
-func (t *jobTracker) get(id string) (*job, bool) {
+// statusDTO looks up a job and snapshots it into a jobStatusDTO while
+// holding the tracker's lock. Building the DTO outside the lock would
+// race with the crawl goroutine's setRunning/setSucceeded/setFailed
+// calls, which mutate the same *job concurrently.
+func (t *jobTracker) statusDTO(id string) (jobStatusDTO, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	j, ok := t.jobs[id]
-	return j, ok
+	if !ok {
+		return jobStatusDTO{}, false
+	}
+	return j.toDTO(), true
 }
 
 func (t *jobTracker) setRunning(id string) {
