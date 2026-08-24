@@ -92,7 +92,7 @@ func runCrawl(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	c := crawler.New(cfg.Crawl, cfg.Chunking, cfg.DataDir, exportWriter{}, indexAdapter{idx}, func(format string, a ...any) {
+	c := crawler.New(cfg.Crawl, cfg.Chunking, cfg.LLMExtractor, cfg.DataDir, exportWriter{}, indexAdapter{idx}, func(format string, a ...any) {
 		_, _ = fmt.Fprintf(stderr, format+"\n", a...)
 	})
 

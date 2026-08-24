@@ -268,6 +268,11 @@ func currencyFromSymbol(s string) string {
 func availabilityField(v interface{}) Availability {
 	s, _ := v.(string)
 	s = strings.ToLower(strings.TrimSpace(s))
+	// Normalize underscore/hyphen separators (our own Availability enum's
+	// wire format, "in_stock"/"out_of_stock", and what the LLM extractor is
+	// asked to return) onto the same "no separator" form the checks below
+	// already match ("instock", "outofstock", ...).
+	s = strings.NewReplacer("_", "", "-", "").Replace(s)
 	switch {
 	case s == "":
 		return Unknown

@@ -76,7 +76,7 @@ func TestCrawlerIndexesPagesIntoSearchableIndex(t *testing.T) {
 	cfg := config.CrawlConfig{RateLimitRPS: 1000, MaxPages: 5, MaxDepth: 1, RespectRobots: true, UserAgent: "sitedex-test"}
 	chunking := config.ChunkingConfig{TargetChars: 1200, OverlapChars: 100}
 
-	c := crawler.New(cfg, chunking, dataDir, noopWriter{}, indexAdapter{idx}, nil)
+	c := crawler.New(cfg, chunking, config.LLMExtractorConfig{}, dataDir, noopWriter{}, indexAdapter{idx}, nil)
 	if _, err := c.Crawl(context.Background(), srv.URL+"/"); err != nil {
 		t.Fatalf("Crawl: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestCrawlerIndexesProductsIntoSearchableIndex(t *testing.T) {
 	cfg := config.CrawlConfig{RateLimitRPS: 1000, MaxPages: 5, MaxDepth: 2, RespectRobots: true, UserAgent: "sitedex-test"}
 	chunking := config.ChunkingConfig{TargetChars: 1200, OverlapChars: 100}
 
-	c := crawler.New(cfg, chunking, dataDir, noopWriter{}, indexAdapter{idx}, nil)
+	c := crawler.New(cfg, chunking, config.LLMExtractorConfig{}, dataDir, noopWriter{}, indexAdapter{idx}, nil)
 	if _, err := c.Crawl(context.Background(), srv.URL+"/product/blue-shoes"); err != nil {
 		t.Fatalf("Crawl: %v", err)
 	}

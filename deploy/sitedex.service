@@ -1,0 +1,45 @@
+# Sample systemd unit for running `sitedex serve` in an LXC container or
+# any bare Linux host. Install as /etc/systemd/system/sitedex.service.
+#
+#   sudo useradd --system --home /var/lib/sitedex --create-home sitedex
+#   sudo cp sitedex /usr/local/bin/sitedex
+#   sudo cp sitedex.example.yaml /etc/sitedex/sitedex.yaml   # mkdir -p /etc/sitedex first, then edit it
+#   sudo cp deploy/sitedex.service /etc/systemd/system/sitedex.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sitedex
+#
+# data_dir in sitedex.yaml should point inside /var/lib/sitedex (or wherever
+# StateDirectory below resolves to) — that one directory is sitedex's
+# entire state; back it up by copying it.
+
+[Unit]
+Description=sitedex — RAG-ready site crawler and product search API
+Documentation=https://github.com/Xara-AI/sitedex
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sitedex
+Group=sitedex
+ExecStart=/usr/local/bin/sitedex serve --config /etc/sitedex/sitedex.yaml
+Restart=on-failure
+RestartSec=5s
+
+# sitedex handles SIGTERM with a graceful shutdown (finishes in-flight
+# requests, saves crawl state) — give it a little room before systemd
+# escalates to SIGKILL.
+TimeoutStopSec=20s
+
+StateDirectory=sitedex
+WorkingDirectory=/var/lib/sitedex
+
+# Sandboxing — sitedex needs no more than this to do its job.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sitedex
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

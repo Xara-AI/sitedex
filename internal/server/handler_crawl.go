@@ -65,7 +65,7 @@ func (s *Server) runCrawlJob(ctx context.Context, j *job) {
 	}
 	defer func() { _ = idx.Close() }()
 
-	c := crawler.New(s.cfg.Crawl, s.cfg.Chunking, s.cfg.DataDir, exportWriter{}, indexAdapter{idx},
+	c := crawler.New(s.cfg.Crawl, s.cfg.Chunking, s.cfg.LLMExtractor, s.cfg.DataDir, exportWriter{}, indexAdapter{idx},
 		func(format string, a ...any) { s.logger.Debug("crawl", "msg", fmt.Sprintf(format, a...)) })
 
 	res, err := c.Crawl(ctx, j.site)

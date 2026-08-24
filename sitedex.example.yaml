@@ -31,6 +31,14 @@ chunking:
   overlap_chars: 100
 
 llm_extractor:
+  # EXPERIMENTAL — disabled by default, and it costs money when enabled.
+  # This is a pluggable last resort, tried only after JSON-LD, microdata,
+  # OpenGraph, and the CSS-heuristic detectors have all failed to find a
+  # product on the page. It sends the page's stripped text to the model
+  # you configure and asks for the same product JSON via a strict-schema
+  # prompt — it's a fallback for platforms sitedex doesn't recognize yet,
+  # not a replacement for adding a real detector (see CONTRIBUTING.md).
   provider: none # none|openai|anthropic
-  model: ""
-  api_key_env: ""
+  model: "" # empty uses a low-cost default (gpt-4o-mini / claude-haiku-4-5)
+  api_key_env: "" # name of the env var holding your API key, e.g. OPENAI_API_KEY
+  # — sitedex reads that variable at startup; it never takes a raw key in this file.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -87,6 +88,7 @@ type Logf func(format string, args ...any)
 type Crawler struct {
 	cfg      config.CrawlConfig
 	chunking config.ChunkingConfig
+	llm      product.LLMConfig
 	dataDir  string
 	client   *http.Client
 	writer   PageWriter
@@ -94,21 +96,29 @@ type Crawler struct {
 	log      Logf
 }
 
-// New builds a Crawler from the crawl/chunking sections of the config and
-// the data_dir it should write into. indexer may be nil to skip indexing
-// (markdown-only crawl).
-func New(cfg config.CrawlConfig, chunking config.ChunkingConfig, dataDir string, writer PageWriter, indexer Indexer, log Logf) *Crawler {
+// New builds a Crawler from the crawl/chunking/llm_extractor sections of
+// the config and the data_dir it should write into. indexer may be nil to
+// skip indexing (markdown-only crawl). The LLM extractor's API key is
+// resolved once here, from the environment variable llmCfg.APIKeyEnv
+// names — llm_extractor.provider defaults to "none", which leaves the LLM
+// tier disabled regardless (see product.ExtractWithLLM).
+func New(cfg config.CrawlConfig, chunking config.ChunkingConfig, llmCfg config.LLMExtractorConfig, dataDir string, writer PageWriter, indexer Indexer, log Logf) *Crawler {
 	if log == nil {
 		log = func(string, ...any) {}
 	}
 	return &Crawler{
 		cfg:      cfg,
 		chunking: chunking,
-		dataDir:  dataDir,
-		client:   NewHTTPClient(),
-		writer:   writer,
-		indexer:  indexer,
-		log:      log,
+		llm: product.LLMConfig{
+			Provider: llmCfg.Provider,
+			Model:    llmCfg.Model,
+			APIKey:   os.Getenv(llmCfg.APIKeyEnv),
+		},
+		dataDir: dataDir,
+		client:  NewHTTPClient(),
+		writer:  writer,
+		indexer: indexer,
+		log:     log,
 	}
 }
 
@@ -296,7 +306,7 @@ func (c *Crawler) fetchAndProcess(ctx context.Context, u *url.URL, state *StateS
 		}
 
 		var idxProduct *ProductForIndex
-		if prod, ok := product.Extract(res.Body, u); ok {
+		if prod, ok := product.ExtractWithLLM(ctx, res.Body, u, c.llm); ok {
 			idxProduct = &ProductForIndex{
 				Name: prod.Name, Description: prod.Description, Price: prod.Price, HasPrice: prod.HasPrice,
 				Currency: prod.Currency, Availability: string(prod.Availability), Image: prod.Image,

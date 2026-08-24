@@ -68,6 +68,21 @@ repo are a starting point, not a substitute for how these platforms'
 markup varies in practice. This corpus is the tool's real moat; growing it
 is the main ongoing contribution surface.
 
+## About the LLM extractor
+
+`internal/extract/product/llm.go` is the fifth and last tier of the
+extraction chain — tried only when the four tiers above it (JSON-LD,
+microdata, OpenGraph, CSS heuristics) all fail *and* a user has opted in
+via `llm_extractor.provider`. It's a fallback for platforms sitedex
+doesn't recognize yet, not something to lean on: if you find yourself
+relying on it for a platform with recognizable markup, that's a sign a
+real `Detector` (see above) would serve users better — please add one
+instead of routing around the gap with the LLM tier. It calls the OpenAI/
+Anthropic REST APIs directly with `net/http` rather than their SDKs, to
+avoid adding those as permanent dependencies for a feature most users
+won't enable — keep it that way; see CLAUDE.md's minimal-dependencies
+constraint.
+
 ## Project structure and roadmap
 
 See `CLAUDE.md` at the repo root for the full architecture, CLI/HTTP API
