@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - ineffassign
+    - misspell
+    - unconvert
+    - gocritic
+  settings:
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

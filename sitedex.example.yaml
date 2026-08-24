@@ -1,0 +1,35 @@
+# Sample sitedex configuration. Copy to sitedex.yaml and edit, or leave the
+# defaults below and override individual values via SITEDEX_* environment
+# variables (env vars always win — see README for the full list).
+#
+# Every key here is optional; sitedex runs with sane defaults if this file
+# is absent entirely.
+
+data_dir: ./sitedex-data
+listen: ":8080"
+token: "" # empty = no auth (fine for localhost/LXC-internal use)
+
+crawl:
+  rate_limit_rps: 1.0
+  max_pages: 2000
+  max_depth: 5
+  respect_robots: true # override only for sites you own or have permission to crawl
+  user_agent: "sitedex/{version} (+https://github.com/Xara-AI/sitedex)"
+  include: [] # URL regex allowlist (empty = all)
+  exclude: ["/cart", "/checkout", "/wp-admin"]
+  recrawl_interval: 24h # serve mode background refresh
+  renderer_url: "" # hook for an external JS-rendering service (not implemented in v1)
+
+search:
+  fresh_top_n: 3
+  fresh_timeout_ms: 2500
+  auto_index_on_cold_query: true
+
+chunking:
+  target_chars: 1200
+  overlap_chars: 100
+
+llm_extractor:
+  provider: none # none|openai|anthropic
+  model: ""
+  api_key_env: ""

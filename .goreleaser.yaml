@@ -1,0 +1,58 @@
+version: 2
+
+project_name: sitedex
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sitedex
+    main: ./cmd/sitedex
+    binary: sitedex
+    env:
+      - CGO_ENABLED=0 # no CGO: modernc.org/sqlite is pure Go, keeps binaries static
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/Xara-AI/sitedex/internal/version.Version={{ .Version }}
+      - -X github.com/Xara-AI/sitedex/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/Xara-AI/sitedex/internal/version.Date={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: sitedex
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^test:"
+      - "^ci:"
+      - "^docs:"
+
+release:
+  github:
+    owner: Xara-AI
+    name: sitedex

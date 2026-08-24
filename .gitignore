@@ -1,0 +1,7 @@
+.idea
+bin/
+dist/
+sitedex-data/
+sitedex.yaml
+*.db
+coverage.out
