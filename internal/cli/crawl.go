@@ -1,12 +1,29 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Xara-AI/sitedex/internal/config"
+	"github.com/Xara-AI/sitedex/internal/crawler"
+	"github.com/Xara-AI/sitedex/internal/export"
+	"github.com/Xara-AI/sitedex/internal/extract/content"
 )
+
+// exportWriter adapts export.WritePage to the crawler.PageWriter
+// interface, so internal/crawler doesn't need to import internal/export
+// (it stays a pure orchestration + networking package).
+type exportWriter struct{}
+
+func (exportWriter) WritePage(kbDir string, pageURL *url.URL, page *content.Page) (string, error) {
+	return export.WritePage(kbDir, pageURL, page)
+}
 
 func runCrawl(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("crawl", flag.ContinueOnError)
@@ -30,9 +47,22 @@ func runCrawl(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// TODO(M2): frontier + robots.txt + rate limiter + fetcher, content
-	// extraction, and markdown export land in internal/crawler,
-	// internal/extract/content, and internal/export.
-	_, _ = fmt.Fprintf(stdout, "crawl: not implemented yet (target milestone M2); site=%s data_dir=%s\n", *site, cfg.DataDir)
+	// A crawl of up to max_pages at rate_limit_rps can run for a while;
+	// let Ctrl-C (or a container's SIGTERM) stop it cleanly, saving
+	// whatever revalidation state has accumulated so far.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	c := crawler.New(cfg.Crawl, cfg.DataDir, exportWriter{}, func(format string, a ...any) {
+		_, _ = fmt.Fprintf(stderr, format+"\n", a...)
+	})
+
+	res, err := c.Crawl(ctx, *site)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(stdout, "crawl complete: site=%s visited=%d fetched=%d skipped=%d failed=%d duration=%s\n",
+		res.Site, res.PagesVisited, res.PagesFetched, res.PagesSkipped, res.PagesFailed, res.Duration.Round(1e6))
 	return nil
 }

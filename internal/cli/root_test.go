@@ -2,6 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,6 +16,19 @@ func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	var out, errOut bytes.Buffer
 	code = RunWithIO(args, &out, &errOut)
 	return code, out.String(), errOut.String()
+}
+
+// writeTestConfig writes a minimal sitedex.yaml pointing data_dir at dir
+// (so crawl/export tests never touch the real ./sitedex-data default) with
+// a fast rate limit, and returns its path.
+func writeTestConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sitedex.yaml")
+	yaml := "data_dir: " + dataDir + "\ncrawl:\n  rate_limit_rps: 1000\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write test config: %v", err)
+	}
+	return path
 }
 
 func TestRun_NoArgsPrintsUsage(t *testing.T) {
@@ -64,12 +82,60 @@ func TestRun_CrawlRequiresSite(t *testing.T) {
 }
 
 func TestRun_CrawlWithSite(t *testing.T) {
-	code, stdout, _ := run(t, "crawl", "--site", "https://example.com")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/sitemap.xml", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><main><p>Home page content long enough to clear the density threshold nicely for this CLI test.</p></main></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	configPath := writeTestConfig(t, t.TempDir())
+
+	code, stdout, stderr := run(t, "crawl", "--site", srv.URL+"/", "--config", configPath)
 	if code != 0 {
-		t.Errorf("code = %d, want 0", code)
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if !strings.Contains(stdout, "site=https://example.com") {
-		t.Errorf("stdout = %q, want it to echo the site flag", stdout)
+	if !strings.Contains(stdout, "fetched=1") {
+		t.Errorf("stdout = %q, want fetched=1", stdout)
+	}
+}
+
+func TestRun_CrawlThenExportMD(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/sitemap.xml", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><main><p>Home page content long enough to clear the density threshold nicely for this CLI test.</p></main></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	configPath := writeTestConfig(t, dataDir)
+
+	if code, _, stderr := run(t, "crawl", "--site", srv.URL+"/", "--config", configPath); code != 0 {
+		t.Fatalf("crawl code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	// The crawler keys each site's directory by RegistrableDomain(seed.Host),
+	// which for a bare IP:port falls back to the IP with the port stripped
+	// (see internal/crawler/domain.go) — match that here.
+	site, _, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	outDir := t.TempDir()
+	code, stdout, stderr := run(t, "export", "--site", site, "--format", "md", "--out", outDir, "--config", configPath)
+	if code != 0 {
+		t.Fatalf("export code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "files=1") {
+		t.Errorf("stdout = %q, want files=1", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "index.md")); err != nil {
+		t.Errorf("expected exported index.md: %v", err)
 	}
 }
 

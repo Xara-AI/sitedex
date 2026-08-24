@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/Xara-AI/sitedex/internal/config"
+	"github.com/Xara-AI/sitedex/internal/export"
 )
 
 func runExport(args []string, stdout, stderr io.Writer) error {
@@ -36,8 +37,18 @@ func runExport(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// TODO(M2/M3): implement markdown/JSONL emitters in internal/export,
-	// reading from the site's index in cfg.DataDir.
-	_, _ = fmt.Fprintf(stdout, "export: not implemented yet (target milestone M2); site=%s format=%s out=%s data_dir=%s\n", *site, *format, *out, cfg.DataDir)
+	if *format == "jsonl" {
+		// TODO(M3): JSONL export needs the SQLite index (chunks/products
+		// tables) as its source; markdown export below doesn't depend on
+		// it since the crawler writes kb/*.md directly.
+		_, _ = fmt.Fprintf(stdout, "export: --format jsonl not implemented yet (target milestone M3); site=%s data_dir=%s\n", *site, cfg.DataDir)
+		return nil
+	}
+
+	n, err := export.CopyMarkdownKB(cfg.DataDir, *site, *out)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "export complete: site=%s format=md out=%s files=%d\n", *site, *out, n)
 	return nil
 }
