@@ -85,11 +85,10 @@ func (db *DB) DeletePage(pageURL string) error {
 	if err := deletePageChunks(tx, pageURL); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM products_fts WHERE page_url = ?`, pageURL); err != nil {
-		return fmt.Errorf("delete product fts: %w", err)
+	if err := deleteProductRows(tx, pageURL); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM pages WHERE url = ?`, pageURL); err != nil {
-		// products/chunks rows cascade via ON DELETE CASCADE (foreign_keys=ON)
 		return fmt.Errorf("delete page: %w", err)
 	}
 

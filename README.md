@@ -9,11 +9,15 @@ it respects robots.txt, discovers pages via sitemap.xml and links, writes
 clean per-page markdown (with YAML frontmatter and a heading outline) into
 `<data_dir>/<site>/kb/`, and indexes it into a per-site SQLite FTS5 index
 for full-text search — including Romanian-diacritic-insensitive matching.
-Product extraction, the live HTTP API, and `--fresh` live-verification are
-not implemented yet — see `sitedex <command> -h` output, which says exactly
-what's missing and which milestone lands it. This note will be replaced
-with a full README (quickstart, API reference, extraction chain, platform
-support table, limitations) once product extraction and the HTTP API land.
+Every crawled page is also run through a product extraction chain
+(JSON-LD → microdata → OpenGraph → per-platform CSS heuristics for
+WooCommerce/Shopify/PrestaShop/OpenCart); pages that are products show up
+in search results with price, currency, and availability. The live HTTP
+API and `--fresh` live-verification are not implemented yet — see
+`sitedex <command> -h` output, which says exactly what's missing and which
+milestone lands it. This note will be replaced with a full README
+(quickstart, API reference, extraction chain, platform support table,
+limitations) once the HTTP API lands.
 
 ## Build
 

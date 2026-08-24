@@ -11,6 +11,7 @@ import (
 
 	"github.com/Xara-AI/sitedex/internal/config"
 	"github.com/Xara-AI/sitedex/internal/extract/content"
+	"github.com/Xara-AI/sitedex/internal/extract/product"
 )
 
 // Result summarizes one crawl run.
@@ -30,18 +31,24 @@ type PageWriter interface {
 	WritePage(kbDir string, pageURL *url.URL, page *content.Page) (relPath string, err error)
 }
 
-// Indexer persists one page's searchable content (metadata + chunks) into
-// the site's index. It's an interface for the same reason PageWriter is:
-// the crawler doesn't need to know about SQLite, and tests can substitute
-// an in-memory recorder. nil is valid — indexing is then simply skipped
-// (e.g. for callers that only want the markdown export).
+// Indexer persists one page's searchable content (metadata + chunks, and
+// separately its product data if any) into the site's index. It's an
+// interface for the same reason PageWriter is: the crawler doesn't need to
+// know about SQLite, and tests can substitute an in-memory recorder. nil
+// is valid — indexing is then simply skipped (e.g. for callers that only
+// want the markdown export).
 type Indexer interface {
 	IndexPage(page PageForIndex, chunks []ChunkForIndex) error
+	// IndexProduct upserts (p != nil) or removes (p == nil) the product
+	// record for pageURL. Most pages aren't products, so p is nil far more
+	// often than not — that's a normal call, not a special case to avoid.
+	IndexProduct(pageURL string, p *ProductForIndex) error
 }
 
-// PageForIndex and ChunkForIndex mirror internal/index's PageRecord/
-// ChunkRecord shapes without the crawler package depending on
-// internal/index directly (same decoupling reasoning as PageWriter).
+// PageForIndex, ChunkForIndex, and ProductForIndex mirror internal/index's
+// PageRecord/ChunkRecord/ProductRecord shapes without the crawler package
+// depending on internal/index directly (same decoupling reasoning as
+// PageWriter).
 type PageForIndex struct {
 	URL          string
 	Title        string
@@ -57,6 +64,18 @@ type ChunkForIndex struct {
 	Ordinal     int
 	HeadingPath string
 	Text        string
+}
+
+type ProductForIndex struct {
+	Name             string
+	Description      string
+	Price            float64
+	HasPrice         bool
+	Currency         string
+	Availability     string
+	Image            string
+	ExtractionMethod string
+	RawJSON          string
 }
 
 // Logf is a minimal structured-ish logging hook; nil is fine (silent).
@@ -274,6 +293,18 @@ func (c *Crawler) fetchAndProcess(ctx context.Context, u *url.URL, state *StateS
 		}
 		if err := c.indexer.IndexPage(idxPage, idxChunks); err != nil {
 			return nil, false, fmt.Errorf("index page: %w", err)
+		}
+
+		var idxProduct *ProductForIndex
+		if prod, ok := product.Extract(res.Body, u); ok {
+			idxProduct = &ProductForIndex{
+				Name: prod.Name, Description: prod.Description, Price: prod.Price, HasPrice: prod.HasPrice,
+				Currency: prod.Currency, Availability: string(prod.Availability), Image: prod.Image,
+				ExtractionMethod: string(prod.ExtractionMethod), RawJSON: prod.RawJSON,
+			}
+		}
+		if err := c.indexer.IndexProduct(page.URL, idxProduct); err != nil {
+			return nil, false, fmt.Errorf("index product: %w", err)
 		}
 	}
 

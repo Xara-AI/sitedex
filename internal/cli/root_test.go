@@ -213,6 +213,46 @@ func TestRun_CrawlThenSearch(t *testing.T) {
 	}
 }
 
+func TestRun_CrawlThenSearchProduct(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/sitemap.xml", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><head><script type="application/ld+json">
+{"@context":"https://schema.org/","@type":"Product","name":"Blue Running Shoes",
+ "offers":{"@type":"Offer","price":"129.99","priceCurrency":"USD","availability":"https://schema.org/InStock"}}
+</script></head><body><main><h1>Blue Running Shoes</h1></main></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	configPath := writeTestConfig(t, dataDir)
+
+	if code, _, stderr := run(t, "crawl", "--site", srv.URL+"/", "--config", configPath); code != 0 {
+		t.Fatalf("crawl code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	site, _, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+
+	code, stdout, stderr := run(t, "search", "--site", site, "--query", "blue running shoes", "--config", configPath)
+	if code != 0 {
+		t.Fatalf("search code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "[product]") {
+		t.Errorf("stdout = %q, want it to mark the result as a product", stdout)
+	}
+	if !strings.Contains(stdout, "129.99 USD") {
+		t.Errorf("stdout = %q, want it to show the price", stdout)
+	}
+	if !strings.Contains(stdout, "in_stock") {
+		t.Errorf("stdout = %q, want it to show availability", stdout)
+	}
+}
+
 func TestRun_SearchOnUncrawledSiteErrors(t *testing.T) {
 	configPath := writeTestConfig(t, t.TempDir())
 	code, _, stderr := run(t, "search", "--site", "never-crawled.example", "--query", "anything", "--config", configPath)

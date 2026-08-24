@@ -43,6 +43,17 @@ func (a indexAdapter) IndexPage(page crawler.PageForIndex, chunks []crawler.Chun
 	return a.db.IndexPage(rec, chunkRecs)
 }
 
+func (a indexAdapter) IndexProduct(pageURL string, p *crawler.ProductForIndex) error {
+	if p == nil {
+		return a.db.IndexProduct(pageURL, nil)
+	}
+	return a.db.IndexProduct(pageURL, &index.ProductRecord{
+		Name: p.Name, Description: p.Description, Price: p.Price, HasPrice: p.HasPrice,
+		Currency: p.Currency, Availability: p.Availability, Image: p.Image,
+		ExtractionMethod: p.ExtractionMethod, RawJSON: p.RawJSON,
+	})
+}
+
 func runCrawl(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("crawl", flag.ContinueOnError)
 	fs.SetOutput(stderr)

@@ -54,7 +54,14 @@ func runSearch(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	for i, r := range results {
-		_, _ = fmt.Fprintf(stdout, "%d. %s  (score %.2f)\n   %s\n", i+1, r.Title, r.Score, r.URL)
+		_, _ = fmt.Fprintf(stdout, "%d. [%s] %s  (score %.2f)\n   %s\n", i+1, r.Type, r.Title, r.Score, r.URL)
+		if r.Type == "product" {
+			priceStr := "price unknown"
+			if r.HasPrice {
+				priceStr = fmt.Sprintf("%.2f %s", r.Price, r.Currency)
+			}
+			_, _ = fmt.Fprintf(stdout, "   %s, %s (via %s)\n", priceStr, r.Availability, r.ExtractionMethod)
+		}
 		if r.HeadingPath != "" {
 			_, _ = fmt.Fprintf(stdout, "   %s\n", r.HeadingPath)
 		}

@@ -1,43 +1,72 @@
 package index
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
 	"unicode"
 )
 
-// Result is one page-level search hit: the best-scoring chunk of a page,
-// representing that page in the results (a page can have many chunks, but
-// only its best match is surfaced, matching the HTTP API's one-row-per-page
-// contract described in CLAUDE.md).
+// Result is one page-level search hit — either the best-scoring chunk of a
+// regular page (Type "page") or an extracted product (Type "product"). A
+// page can match on both its content and its product data; when it does,
+// the product representation wins (see Search), matching the richer
+// product-search use case this tool is built for.
 type Result struct {
 	URL         string
+	Type        string // "page" or "product"
 	Title       string
-	HeadingPath string
+	HeadingPath string // page results only
 	Snippet     string
-	Score       float64 // heuristic, roughly 0..1, higher is better
+
+	// Product results only:
+	Price            float64
+	HasPrice         bool
+	Currency         string
+	Availability     string
+	Image            string
+	ExtractionMethod string
+
+	Score float64 // heuristic, roughly 0..1, higher is better
 }
 
-// bm25Weights assigns column weights for chunks_fts (page_url, ord, title,
-// heading_path, text, in schema order): title matches rank well above
-// heading-path matches, which rank above plain body text. page_url/ord are
-// UNINDEXED and never match, so their weight is irrelevant.
-const bm25Weights = "0, 0, 5.0, 2.0, 1.0"
+// chunkBM25Weights assigns column weights for chunks_fts (page_url, ord,
+// title, heading_path, text, in schema order): title matches rank well
+// above heading-path matches, which rank above plain body text. page_url/
+// ord are UNINDEXED and never match, so their weight is irrelevant.
+const chunkBM25Weights = "0, 0, 5.0, 2.0, 1.0"
+
+// productBM25Weights assigns column weights for products_fts (page_url,
+// name, description, in schema order): name matches rank above
+// description matches.
+const productBM25Weights = "0, 3.0, 1.0"
+
+// productMethodBonus is subtracted from a product candidate's bm25 rank
+// (lower is better) based on how it was extracted, so a JSON-LD-sourced
+// product outranks an equally-relevant heuristic-sourced one — per
+// CLAUDE.md: "JSON-LD > heuristics > llm".
+var productMethodBonus = map[string]float64{
+	"json-ld":   2.0,
+	"microdata": 1.5,
+	"opengraph": 1.0,
+	"heuristic": 0.0,
+	"llm":       -1.0,
+}
 
 // phraseBonus is subtracted from a candidate's bm25 rank (lower is
-// better) when the exact query phrase appears verbatim in its text, so
-// an exact-phrase hit outranks a same-terms-any-order hit.
+// better) when the exact query phrase appears verbatim in its matched
+// text, so an exact-phrase hit outranks a same-terms-any-order hit.
 const phraseBonus = 3.0
 
 // candidateFanOut bounds how many raw FTS candidates are pulled per
 // distinct page before re-ranking and deduplicating in Go.
 const candidateFanOut = 8
 
-// Search runs a warm-path (index-only) search over this site's chunks,
-// returning up to limit page-level results ordered best-first. An empty
-// or all-punctuation query returns an empty result set, not an error —
-// per CLAUDE.md, an empty results array is a normal response.
+// Search runs a warm-path (index-only) search over this site's pages and
+// products, returning up to limit results ordered best-first. An empty or
+// all-punctuation query returns an empty result set, not an error — per
+// CLAUDE.md, an empty results array is a normal response.
 func (db *DB) Search(query string, limit int) ([]Result, error) {
 	if limit <= 0 {
 		limit = 10
@@ -51,16 +80,54 @@ func (db *DB) Search(query string, limit int) ([]Result, error) {
 	if candidateLimit < 50 {
 		candidateLimit = 50
 	}
+	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
 
+	productResults, err := db.searchProducts(ftsQuery, candidateLimit, normalizedQuery)
+	if err != nil {
+		return nil, err
+	}
+	chunkResults, err := db.searchChunks(ftsQuery, candidateLimit, normalizedQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []Result
+	seen := make(map[string]bool, limit)
+	// Products first: for a page that matches on both its product data and
+	// its content, prefer showing it as a product (richer, more useful
+	// result for this tool's purpose).
+	for _, r := range productResults {
+		if seen[r.URL] {
+			continue
+		}
+		seen[r.URL] = true
+		results = append(results, r)
+	}
+	for _, r := range chunkResults {
+		if seen[r.URL] {
+			continue
+		}
+		seen[r.URL] = true
+		results = append(results, r)
+	}
+
+	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+func (db *DB) searchChunks(ftsQuery string, candidateLimit int, normalizedQuery string) ([]Result, error) {
 	rows, err := db.sql.Query(fmt.Sprintf(`
 		SELECT page_url, title, heading_path, text, bm25(chunks_fts, %s) AS rank
 		FROM chunks_fts
 		WHERE chunks_fts MATCH ?
 		ORDER BY rank ASC
 		LIMIT ?
-	`, bm25Weights), ftsQuery, candidateLimit)
+	`, chunkBM25Weights), ftsQuery, candidateLimit)
 	if err != nil {
-		return nil, fmt.Errorf("search query: %w", err)
+		return nil, fmt.Errorf("search chunks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -72,15 +139,13 @@ func (db *DB) Search(query string, limit int) ([]Result, error) {
 	for rows.Next() {
 		var c candidate
 		if err := rows.Scan(&c.url, &c.title, &c.headingPath, &c.text, &c.rank); err != nil {
-			return nil, fmt.Errorf("scan search row: %w", err)
+			return nil, fmt.Errorf("scan chunk row: %w", err)
 		}
 		candidates = append(candidates, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("search rows: %w", err)
+		return nil, fmt.Errorf("chunk rows: %w", err)
 	}
-
-	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
 
 	type scored struct {
 		candidate
@@ -99,25 +164,85 @@ func (db *DB) Search(query string, limit int) ([]Result, error) {
 	}
 	sort.SliceStable(adjusted, func(i, j int) bool { return adjusted[i].adjRank < adjusted[j].adjRank })
 
-	var results []Result
-	seen := make(map[string]bool, limit)
+	seen := make(map[string]bool)
+	var out []Result
 	for _, c := range adjusted {
 		if seen[c.url] {
 			continue
 		}
 		seen[c.url] = true
-		results = append(results, Result{
-			URL:         c.url,
-			Title:       c.title,
-			HeadingPath: c.headingPath,
-			Snippet:     snippet(c.text, 200),
-			Score:       scoreFromRank(c.adjRank),
+		out = append(out, Result{
+			URL: c.url, Type: "page", Title: c.title, HeadingPath: c.headingPath,
+			Snippet: snippet(c.text, 200), Score: scoreFromRank(c.adjRank),
 		})
-		if len(results) >= limit {
-			break
-		}
 	}
-	return results, nil
+	return out, nil
+}
+
+func (db *DB) searchProducts(ftsQuery string, candidateLimit int, normalizedQuery string) ([]Result, error) {
+	rows, err := db.sql.Query(fmt.Sprintf(`
+		SELECT pf.page_url, p.name, p.description, p.price, p.currency, p.availability, p.image, p.extraction_method,
+		       bm25(products_fts, %s) AS rank
+		FROM products_fts pf
+		JOIN products p ON p.page_url = pf.page_url
+		WHERE products_fts MATCH ?
+		ORDER BY rank ASC
+		LIMIT ?
+	`, productBM25Weights), ftsQuery, candidateLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search products: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type candidate struct {
+		url, name, description, currency, availability, image, method string
+		price                                                         sql.NullFloat64
+		rank                                                          float64
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.url, &c.name, &c.description, &c.price, &c.currency, &c.availability, &c.image, &c.method, &c.rank); err != nil {
+			return nil, fmt.Errorf("scan product row: %w", err)
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("product rows: %w", err)
+	}
+
+	type scored struct {
+		candidate
+		adjRank float64
+	}
+	adjusted := make([]scored, len(candidates))
+	for i, c := range candidates {
+		adj := c.rank - productMethodBonus[c.method]
+		if normalizedQuery != "" {
+			hay := strings.ToLower(c.name + " " + c.description)
+			if strings.Contains(hay, normalizedQuery) {
+				adj -= phraseBonus
+			}
+		}
+		adjusted[i] = scored{candidate: c, adjRank: adj}
+	}
+	sort.SliceStable(adjusted, func(i, j int) bool { return adjusted[i].adjRank < adjusted[j].adjRank })
+
+	seen := make(map[string]bool)
+	var out []Result
+	for _, c := range adjusted {
+		if seen[c.url] {
+			continue
+		}
+		seen[c.url] = true
+		out = append(out, Result{
+			URL: c.url, Type: "product", Title: c.name, Snippet: snippet(c.description, 200),
+			Price: c.price.Float64, HasPrice: c.price.Valid, Currency: c.currency,
+			Availability: c.availability, Image: c.image, ExtractionMethod: c.method,
+			Score: scoreFromRank(c.adjRank),
+		})
+	}
+	return out, nil
 }
 
 // sanitizeFTSQuery turns free-form user input into a safe FTS5 MATCH
