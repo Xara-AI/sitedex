@@ -44,7 +44,7 @@ func runSearch(args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintln(stderr, "search: --fresh not implemented yet (target milestone M5); returning index-only results")
 	}
 
-	results, err := search.New(cfg.DataDir).Search(*site, *query, *limit)
+	results, err := search.New(cfg.DataDir, cfg.Crawl.UserAgent).Search(*site, *query, *limit)
 	if err != nil {
 		return err
 	}

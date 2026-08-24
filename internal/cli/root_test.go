@@ -284,13 +284,19 @@ func TestRun_ExportRejectsBadFormat(t *testing.T) {
 	}
 }
 
-func TestRun_ServeDefaultAddr(t *testing.T) {
-	code, stdout, _ := run(t, "serve")
-	if code != 0 {
-		t.Errorf("code = %d, want 0", code)
+// serve now starts a real, blocking HTTP server, so it isn't exercised
+// via the synchronous run() helper here — see internal/server's own test
+// suite for HTTP/shutdown behavior (tested there via listener injection,
+// without needing a real port or OS signals). This test only checks that
+// an invalid address fails fast, before ever blocking.
+func TestRun_ServeInvalidAddrFailsFast(t *testing.T) {
+	configPath := writeTestConfig(t, t.TempDir())
+	code, _, stderr := run(t, "serve", "--addr", "this-is-not-a-valid-address:99999999", "--config", configPath)
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
 	}
-	if !strings.Contains(stdout, "listen=:8080") {
-		t.Errorf("stdout = %q, want default listen addr", stdout)
+	if stderr == "" {
+		t.Error("expected an error message on stderr")
 	}
 }
 

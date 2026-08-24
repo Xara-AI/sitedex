@@ -9,7 +9,7 @@ import (
 )
 
 func TestSearcher_UncrawledSiteErrors(t *testing.T) {
-	_, err := New(t.TempDir()).Search("never-crawled.example", "anything", 10)
+	_, err := New(t.TempDir(), "sitedex-test").Search("never-crawled.example", "anything", 10)
 	if err == nil {
 		t.Fatal("expected an error for a site with no index")
 	}
@@ -33,7 +33,7 @@ func TestSearcher_DelegatesToIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, err := New(dataDir).Search("example.com", "blue shoes", 10)
+	results, err := New(dataDir, "sitedex-test").Search("example.com", "blue shoes", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Xara-AI/sitedex/internal/config"
+	"github.com/Xara-AI/sitedex/internal/server"
 )
 
 func runServe(args []string, stdout, stderr io.Writer) error {
@@ -29,8 +35,27 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		cfg.Listen = *addr
 	}
 
-	// TODO(M5): internal/server HTTP API (search/crawl/sites/healthz/metrics),
-	// background re-crawl scheduler, graceful shutdown.
-	_, _ = fmt.Fprintf(stdout, "serve: not implemented yet (target milestone M5); listen=%s data_dir=%s\n", cfg.Listen, cfg.DataDir)
-	return nil
+	// Structured JSON lines to stdout, per CLAUDE.md's deployment section
+	// (journald/docker-logs friendly, no log files).
+	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: logLevel(cfg.LogLevel)}))
+
+	// SIGTERM is what container orchestrators (systemd, Docker, k8s) send
+	// on stop/restart; SIGINT is Ctrl-C for local runs.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return server.New(cfg, logger).Run(ctx, cfg.Listen)
+}
+
+func logLevel(s string) slog.Level {
+	switch s {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

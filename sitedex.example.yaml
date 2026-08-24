@@ -8,6 +8,7 @@
 data_dir: ./sitedex-data
 listen: ":8080"
 token: "" # empty = no auth (fine for localhost/LXC-internal use)
+log_level: info # debug|info|warn|error; structured JSON lines to stdout
 
 crawl:
   rate_limit_rps: 1.0

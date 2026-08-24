@@ -43,9 +43,10 @@ func (d Duration) String() string { return time.Duration(d).String() }
 
 // Config is the root sitedex configuration, mirroring sitedex.yaml.
 type Config struct {
-	DataDir string `yaml:"data_dir"`
-	Listen  string `yaml:"listen"`
-	Token   string `yaml:"token"` // empty = no auth
+	DataDir  string `yaml:"data_dir"`
+	Listen   string `yaml:"listen"`
+	Token    string `yaml:"token"`     // empty = no auth
+	LogLevel string `yaml:"log_level"` // debug|info|warn|error; structured JSON lines to stdout
 
 	Crawl        CrawlConfig        `yaml:"crawl"`
 	Search       SearchConfig       `yaml:"search"`
@@ -96,9 +97,10 @@ type LLMExtractorConfig struct {
 // documented in CLAUDE.md.
 func Default() *Config {
 	return &Config{
-		DataDir: "./sitedex-data",
-		Listen:  ":8080",
-		Token:   "",
+		DataDir:  "./sitedex-data",
+		Listen:   ":8080",
+		Token:    "",
+		LogLevel: "info",
 		Crawl: CrawlConfig{
 			RateLimitRPS:    1.0,
 			MaxPages:        2000,
@@ -180,9 +182,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("chunking.overlap_chars must be < chunking.target_chars")
 	case c.LLMExtractor.Provider != "none" && c.LLMExtractor.Provider != "openai" && c.LLMExtractor.Provider != "anthropic":
 		return fmt.Errorf("llm_extractor.provider must be one of none|openai|anthropic, got %q", c.LLMExtractor.Provider)
+	case !validLogLevels[c.LogLevel]:
+		return fmt.Errorf("log_level must be one of debug|info|warn|error, got %q", c.LogLevel)
 	}
 	return nil
 }
+
+var validLogLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 
 // envSpec binds one SITEDEX_* environment variable to a setter applied when
 // the variable is present (including empty-string values, which are a
@@ -197,6 +203,7 @@ func applyEnv(cfg *Config) error {
 		{"SITEDEX_DATA_DIR", func(v string) error { cfg.DataDir = v; return nil }},
 		{"SITEDEX_LISTEN", func(v string) error { cfg.Listen = v; return nil }},
 		{"SITEDEX_TOKEN", func(v string) error { cfg.Token = v; return nil }},
+		{"SITEDEX_LOG_LEVEL", func(v string) error { cfg.LogLevel = v; return nil }},
 
 		{"SITEDEX_CRAWL_RATE_LIMIT_RPS", floatSetter(&cfg.Crawl.RateLimitRPS)},
 		{"SITEDEX_CRAWL_MAX_PAGES", intSetter(&cfg.Crawl.MaxPages)},

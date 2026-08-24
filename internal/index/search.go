@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -29,6 +30,12 @@ type Result struct {
 	ExtractionMethod string
 
 	Score float64 // heuristic, roughly 0..1, higher is better
+
+	// Verified and VerifiedAt are set by the search package's fresh-verify
+	// path (M5), not by Search itself — included here so index.Result can
+	// carry the full result shape end to end without a parallel DTO.
+	Verified   bool
+	VerifiedAt time.Time
 }
 
 // chunkBM25Weights assigns column weights for chunks_fts (page_url, ord,
@@ -68,6 +75,15 @@ const candidateFanOut = 8
 // all-punctuation query returns an empty result set, not an error — per
 // CLAUDE.md, an empty results array is a normal response.
 func (db *DB) Search(query string, limit int) ([]Result, error) {
+	return db.SearchFiltered(query, limit, "")
+}
+
+// SearchFiltered is Search with an optional type filter: "" or "any"
+// searches both pages and products (Search's behavior), "page" or
+// "product" searches only that type. Filtering here (rather than after
+// Search truncates to limit) ensures a type-filtered request still gets a
+// full `limit` results when that many exist.
+func (db *DB) SearchFiltered(query string, limit int, typeFilter string) ([]Result, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -82,13 +98,19 @@ func (db *DB) Search(query string, limit int) ([]Result, error) {
 	}
 	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
 
-	productResults, err := db.searchProducts(ftsQuery, candidateLimit, normalizedQuery)
-	if err != nil {
-		return nil, err
+	var productResults, chunkResults []Result
+	var err error
+	if typeFilter != "page" {
+		productResults, err = db.searchProducts(ftsQuery, candidateLimit, normalizedQuery)
+		if err != nil {
+			return nil, err
+		}
 	}
-	chunkResults, err := db.searchChunks(ftsQuery, candidateLimit, normalizedQuery)
-	if err != nil {
-		return nil, err
+	if typeFilter != "product" {
+		chunkResults, err = db.searchChunks(ftsQuery, candidateLimit, normalizedQuery)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var results []Result
