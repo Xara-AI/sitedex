@@ -17,7 +17,7 @@ type wooCommerceDetector struct{}
 func (wooCommerceDetector) Name() string { return "woocommerce" }
 
 func (wooCommerceDetector) Detect(doc *html.Node, pageURL *url.URL) (*Product, bool) {
-	if findByClass(doc, "woocommerce") == nil {
+	if !hasWooCommerceMarker(doc) {
 		return nil, false
 	}
 	root := findByClass(doc, "product")

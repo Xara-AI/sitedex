@@ -87,16 +87,18 @@ func (s *Server) serve(ctx context.Context, ln net.Listener) error {
 }
 
 // routes builds the request mux. serveCtx is the server's overall
-// lifetime context (canceled on shutdown) — only handlers that spawn
-// work outliving the triggering HTTP request (crawl jobs) need it; every
-// other handler uses the per-request r.Context() instead, which is
-// already canceled on client disconnect and allowed to finish during a
-// graceful shutdown.
+// lifetime context (canceled on shutdown) — only handlers that spawn work
+// outliving the triggering HTTP request (crawl jobs, and search's
+// auto-index-on-cold-query side effect) need it; every other handler uses
+// the per-request r.Context() instead, which is already canceled on
+// client disconnect and allowed to finish during a graceful shutdown.
 func (s *Server) routes(serveCtx context.Context) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
-	mux.HandleFunc("POST /v1/search", s.withAuth(s.handleSearch))
+	mux.HandleFunc("POST /v1/search", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		s.handleSearch(serveCtx, w, r)
+	}))
 	mux.HandleFunc("POST /v1/crawl", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		s.handleCrawlTrigger(serveCtx, w, r)
 	}))

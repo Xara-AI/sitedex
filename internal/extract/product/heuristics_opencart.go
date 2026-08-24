@@ -15,7 +15,7 @@ type openCartDetector struct{}
 func (openCartDetector) Name() string { return "opencart" }
 
 func (openCartDetector) Detect(doc *html.Node, pageURL *url.URL) (*Product, bool) {
-	if !strings.Contains(strings.ToLower(metaName(doc, "generator")), "opencart") {
+	if !hasGeneratorMarker(doc, "opencart") {
 		return nil, false
 	}
 

@@ -11,6 +11,12 @@ import (
 	"github.com/Xara-AI/sitedex/internal/index"
 )
 
+// A truly unreachable site (RFC 2606's reserved, guaranteed-not-to-resolve
+// .example TLD) still degrades gracefully: SearchFresh falls through to
+// the cold path (coldpath.go), which can't even fetch a homepage, so it
+// returns empty results rather than propagating a fetch error. See
+// coldpath_integration_test.go for cold path's actual site-search
+// behavior against a reachable site.
 func TestSearchFresh_UncrawledSiteReturnsEmptyNotError(t *testing.T) {
 	resp, err := New(t.TempDir(), "sitedex-test").SearchFresh(context.Background(), Request{
 		Site: "never-crawled.example", Query: "anything", Limit: 10,

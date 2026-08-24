@@ -25,6 +25,14 @@ type Request struct {
 	// (3 results, 2500ms).
 	FreshTopN    int
 	FreshTimeout time.Duration
+
+	// ForceSiteSearch skips the local index even if one exists, going
+	// straight to the cold path (live site-search) — for programmatic use
+	// (e.g. a caller that knows the index is stale and wants a live
+	// result regardless). Not exposed via the documented HTTP request
+	// body; CLAUDE.md's "source:'site-search' forced" trigger is an
+	// internal capability, not a new public API field.
+	ForceSiteSearch bool
 }
 
 // Response is a full search response, as the HTTP API returns it.
@@ -54,12 +62,17 @@ const (
 // verified_at), never blocking the response past budget — per CLAUDE.md's
 // "Hard response budget" requirement.
 //
-// Unlike Search (the CLI's entry point), an uncrawled site is not an
-// error here: it returns zero results with source "index", matching the
-// HTTP API's "empty results is a normal response" contract. This is a
-// deliberate stand-in for M6's cold-path fallback, which will replace
-// this empty response with a live site-search — the response shape
-// won't need to change when that lands.
+// Unlike Search (the CLI's entry point, which errors clearly on an
+// uncrawled site), a site with no index — or req.ForceSiteSearch — falls
+// through to the cold path (coldpath.go): a live on-site search, source
+// "site-search". If that too finds nothing (unreachable site, no
+// recognizable search mechanism, empty results), the response is just
+// zero results with source "index" — never an error, per CLAUDE.md's
+// "empty results is a normal response" contract. Triggering the
+// background full crawl that CLAUDE.md's auto_index_on_cold_query
+// describes is the caller's job (see internal/server), not this
+// package's — internal/search stays decoupled from the crawler/index
+// wiring needed to run one, same as everywhere else in this codebase.
 func (s *Searcher) SearchFresh(ctx context.Context, req Request) (Response, error) {
 	limit := req.Limit
 	if limit <= 0 {
@@ -67,8 +80,11 @@ func (s *Searcher) SearchFresh(ctx context.Context, req Request) (Response, erro
 	}
 
 	dbPath := index.Path(s.dataDir, req.Site)
+	if req.ForceSiteSearch {
+		return s.coldSearch(ctx, req, limit), nil
+	}
 	if _, err := os.Stat(dbPath); err != nil {
-		return Response{Source: "index"}, nil
+		return s.coldSearch(ctx, req, limit), nil
 	}
 	idx, err := index.Open(s.dataDir, req.Site)
 	if err != nil {

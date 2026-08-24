@@ -27,7 +27,6 @@ func extractJSONLD(doc *html.Node, pageURL *url.URL) (*Product, bool) {
 		if p.Name == "" {
 			continue // not enough to call this a successful extraction
 		}
-		p.URL = pageURL.String()
 		p.RawJSON = raw
 		return p, true
 	}
@@ -119,6 +118,7 @@ func productFromJSONLD(m map[string]interface{}, pageURL *url.URL) *Product {
 	if img := ldImage(m["image"]); img != "" {
 		p.Image = resolveURL(pageURL, img)
 	}
+	p.URL = ldURL(m, pageURL)
 
 	if offer := ldOffer(m["offers"]); offer != nil {
 		if price, ok := priceField(offer["price"]); ok {
@@ -136,6 +136,23 @@ func productFromJSONLD(m map[string]interface{}, pageURL *url.URL) *Product {
 	}
 
 	return p
+}
+
+// ldURL resolves a Product node's own URL: an explicit "url" field if
+// present, else "@id" if it looks like an absolute URL, else the page it
+// was found on (correct for a single-product detail page; for a listing
+// page, most real-world JSON-LD puts "url" directly on each Product node,
+// but the schema.org ItemList pattern that instead puts "url" on the
+// wrapping ListItem — one level up from the Product — isn't handled; a
+// known v1 simplification, see ExtractList).
+func ldURL(m map[string]interface{}, pageURL *url.URL) string {
+	if s, ok := m["url"].(string); ok && s != "" {
+		return resolveURL(pageURL, s)
+	}
+	if s, ok := m["@id"].(string); ok && (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) {
+		return s
+	}
+	return pageURL.String()
 }
 
 // ldImage handles image being a bare URL string, an array of them (first

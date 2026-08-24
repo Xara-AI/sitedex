@@ -16,14 +16,20 @@ so product pages show up in search results with price, currency, and
 availability. `sitedex serve` runs the HTTP API (`/v1/search` — including
 `fresh:true` live re-verification within a hard response-time budget,
 `/v1/crawl`, `/v1/sites`, `/healthz`, `/metrics`), a background re-crawl
-scheduler, structured JSON logging, and graceful shutdown.
+scheduler, structured JSON logging, and graceful shutdown. Searching a
+site that's never been crawled falls back to a live "cold path": sitedex
+detects the site's own on-site search endpoint (platform-specific for
+WooCommerce/Shopify/PrestaShop/OpenCart, or a generic `<form
+role="search">` as a fallback), fetches it, and extracts whatever products
+are on the results page — then, if `auto_index_on_cold_query` is enabled
+(the default in serve mode), kicks off a background crawl so the next
+query on that site is warm.
 
-Not implemented yet: the "cold path" (searching/auto-indexing a site
-that's never been crawled) and the optional LLM extraction fallback — see
-`sitedex <command> -h` output for what's missing and which milestone lands
-it. This note will be replaced with a full README (quickstart, API
-reference, extraction chain, platform support table, limitations) closer
-to the v0.1.0 release.
+Not implemented yet: the optional LLM extraction fallback — see `sitedex
+<command> -h` output for what's missing and which milestone lands it.
+This note will be replaced with a full README (quickstart, API reference,
+extraction chain, platform support table, limitations) closer to the
+v0.1.0 release.
 
 ## Build
 

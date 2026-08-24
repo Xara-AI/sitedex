@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -39,6 +40,13 @@ type searchResponse struct {
 	TookMs  int64          `json:"took_ms"`
 }
 
+// shouldAutoIndex reports whether a search response should trigger a
+// background full crawl, per config.SearchConfig.AutoIndexOnColdQuery
+// ("auto_index_on_cold_query" — see CLAUDE.md's cold-path description).
+func shouldAutoIndex(source string, enabled bool) bool {
+	return enabled && source == "site-search"
+}
+
 func toSearchResult(r search.Result) searchResult {
 	out := searchResult{
 		Title: r.Title, URL: r.URL, Type: r.Type, Currency: r.Currency,
@@ -55,11 +63,12 @@ func toSearchResult(r search.Result) searchResult {
 	return out
 }
 
-// handleSearch serves POST /v1/search. It uses r.Context() (not the
-// server's overall lifetime context) so a client disconnect or a
-// graceful-shutdown grace period bounds it naturally — unlike a crawl
-// job, nothing here needs to outlive the request.
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+// handleSearch serves POST /v1/search. The search itself runs on
+// r.Context() (not the server's overall lifetime context), so a client
+// disconnect or the graceful-shutdown grace period bounds it naturally.
+// serveCtx is only needed for the auto-index-on-cold-query side effect
+// below, which — like a crawl job — outlives this request.
+func (s *Server) handleSearch(serveCtx context.Context, w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	var req searchRequest
@@ -87,6 +96,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("search failed", "site", req.Site, "query", req.Query, "err", err)
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
+	}
+
+	// Per CLAUDE.md's cold-path description: a site-search response means
+	// this site wasn't indexed, so — if enabled — kick off a background
+	// full crawl now, fire-and-forget, so the next query on this site is
+	// warm. This doesn't dedupe concurrent cold queries for the same site
+	// into one crawl job; a burst of queries for a newly-seen site can
+	// enqueue more than one redundant crawl — an accepted v1 simplification.
+	if shouldAutoIndex(resp.Source, s.cfg.Search.AutoIndexOnColdQuery) {
+		j := s.jobs.create("https://" + req.Site + "/")
+		s.logger.Info("search: auto-indexing after cold query", "site", req.Site, "job_id", j.id)
+		go s.runCrawlJob(serveCtx, j)
 	}
 
 	results := make([]searchResult, len(resp.Results))

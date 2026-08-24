@@ -2,7 +2,6 @@ package product
 
 import (
 	"net/url"
-	"strings"
 
 	"golang.org/x/net/html"
 )
@@ -17,7 +16,7 @@ type prestaShopDetector struct{}
 func (prestaShopDetector) Name() string { return "prestashop" }
 
 func (prestaShopDetector) Detect(doc *html.Node, pageURL *url.URL) (*Product, bool) {
-	if !strings.Contains(strings.ToLower(metaName(doc, "generator")), "prestashop") {
+	if !hasGeneratorMarker(doc, "prestashop") {
 		return nil, false
 	}
 
