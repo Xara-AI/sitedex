@@ -95,20 +95,36 @@ func (db *DB) migrate() error {
 		return err
 	}
 	for _, c := range columnAdditions {
-		if err := db.ensureColumn(c.table, c.column, c.def); err != nil {
+		added, err := db.ensureColumn(c.table, c.column, c.def)
+		if err != nil {
 			return fmt.Errorf("ensure column %s.%s: %w", c.table, c.column, err)
+		}
+		// Rows written before this column existed get seq=0 from the ALTER
+		// TABLE's DEFAULT — indistinguishable from "not yet seen" as far as
+		// ListItems' `seq > since_seq` filter is concerned, which would
+		// otherwise hide every pre-upgrade row from GET
+		// /v1/sites/{site}/items permanently (since_seq=0, the documented
+		// "everything" bootstrap value, filters on "> 0"). Backfilling real
+		// seq values here — once, only for rows the ALTER just left at
+		// zero — is what makes existing indexes show up without requiring
+		// a re-crawl after upgrading to the version that added seq.
+		if added && c.column == "seq" {
+			if err := db.backfillSeq(c.table); err != nil {
+				return fmt.Errorf("backfill seq for %s: %w", c.table, err)
+			}
 		}
 	}
 	return nil
 }
 
-// ensureColumn adds column to table if it isn't already there. SQLite has
-// no "ALTER TABLE ... ADD COLUMN IF NOT EXISTS", so this checks
-// PRAGMA table_info first rather than relying on error-string matching.
-func (db *DB) ensureColumn(table, column, def string) error {
+// ensureColumn adds column to table if it isn't already there, reporting
+// whether it actually did so. SQLite has no "ALTER TABLE ... ADD COLUMN IF
+// NOT EXISTS", so this checks PRAGMA table_info first rather than relying
+// on error-string matching.
+func (db *DB) ensureColumn(table, column, def string) (added bool, err error) {
 	rows, err := db.sql.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -121,16 +137,78 @@ func (db *DB) ensureColumn(table, column, def string) error {
 			pk        int
 		)
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
-			return err
+			return false, err
 		}
 		if name == column {
-			return nil // already present
+			return false, nil // already present
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return false, err
 	}
 
-	_, err = db.sql.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def))
-	return err
+	if _, err := db.sql.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// seqBackfillKeyColumn is each seq-bearing table's primary key, used to
+// order and target backfillSeq's UPDATEs.
+var seqBackfillKeyColumn = map[string]string{
+	"pages":    "url",
+	"products": "page_url",
+}
+
+// backfillSeq assigns a real, monotonically increasing seq (via nextSeq,
+// the same counter live writes use) to every row in table currently stuck
+// at the ALTER TABLE default of 0 — see the comment in migrate. One
+// row-per-transaction rather than a single bulk statement: this only runs
+// once per table, the first time its index.db is opened under a binary new
+// enough to have the seq column, so simplicity wins over a cleverer
+// window-function UPDATE.
+func (db *DB) backfillSeq(table string) error {
+	keyColumn, ok := seqBackfillKeyColumn[table]
+	if !ok {
+		return fmt.Errorf("backfillSeq: no key column registered for table %q", table)
+	}
+
+	rows, err := db.sql.Query(fmt.Sprintf(`SELECT %s FROM %s WHERE seq = 0 ORDER BY %s`, keyColumn, table, keyColumn))
+	if err != nil {
+		return fmt.Errorf("query rows to backfill: %w", err)
+	}
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan backfill key: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("backfill rows: %w", err)
+	}
+	_ = rows.Close()
+
+	for _, k := range keys {
+		tx, err := db.sql.Begin()
+		if err != nil {
+			return fmt.Errorf("begin backfill tx: %w", err)
+		}
+		seq, err := nextSeq(tx)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET seq = ? WHERE %s = ?`, table, keyColumn), seq, k); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("backfill update: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit backfill tx: %w", err)
+		}
+	}
+	return nil
 }

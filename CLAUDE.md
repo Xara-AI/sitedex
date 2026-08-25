@@ -179,6 +179,15 @@ internal/
   changed. `verified_at` on `products` is set only by fresh-verify (search
   package), separately from `crawled_at` on `pages`, which only reflects
   the last full crawl.
+- `seq` is added via migration (`ALTER TABLE ... ADD COLUMN`), so an
+  index.db written before it existed has every pre-upgrade row at the
+  column's default, 0 — which a naive `seq > since_seq` filter can't tell
+  apart from "not yet seen" at `since_seq=0`, hiding every legacy row from
+  `/items` forever. The migration backfills real seq values into exactly
+  those rows on first open under a seq-aware binary, so upgrading an
+  existing site doesn't require a re-crawl to make it show up. (Found the
+  hard way in the v0.2.0→v0.2.1 gap — see git history before assuming any
+  future ALTER-added column doesn't need the same treatment.)
 
 ### Search (`search/`)
 - **Warm path:** query → FTS5 → ranked top N (ms-fast).
