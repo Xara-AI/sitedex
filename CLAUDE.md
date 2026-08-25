@@ -66,9 +66,35 @@ POST /v1/search
 
 POST /v1/crawl        {"site":"https://example.com"}        → 202 {"job_id":...}
 GET  /v1/crawl/{job}                                        → job status/progress
-GET  /v1/sites                                               → indexed sites, doc counts, last crawl
+GET  /v1/sites                                               → indexed sites, doc counts, last crawl,
+                                                                 oldest/newest crawled_at, last verified_at,
+                                                                 extraction-method breakdown
+GET  /v1/sites/{site}/items   {"since_seq":0,"limit":200,"type":"page|product|any"}
+  → 200 {"items":[{
+       "url": "...", "type": "product|page", "title": "...",
+       "hash": "...", "crawled_at": "2026-08-24T10:00:00Z",
+       "price": 199.90, "currency": "RON", "availability": "in_stock",
+       "extraction_method": "json-ld",
+       "verified_at": "2026-08-25T09:00:00Z",   // present only if ever fresh-verified
+       "seq": 42
+     }],
+     "next_since_seq": 42}
 GET  /healthz                                                → 200 ok
 ```
+
+- `GET /v1/sites/{site}/items` is an index-introspection changefeed, not a
+  paginated snapshot: it answers "what's currently indexed for this site,
+  and when was each item last touched" (by a crawl or by a fresh-verify) —
+  the visibility gap `/v1/search` and `/v1/sites` don't cover on their own.
+  One item per page URL; if the page has extracted product data, the
+  product's fields win (same "product representation wins" rule as
+  search). Every page/product write is stamped with a monotonically
+  increasing `seq` (see `index/seq.go`); a caller passes back the highest
+  `seq` it has seen as `since_seq` and gets only items that changed since —
+  cheap enough to poll on a schedule instead of re-diffing a full listing.
+  `since_seq=0` (or omitted) bootstraps a full listing. An unindexed site
+  returns an empty `items` array (and echoes back `since_seq` as
+  `next_since_seq`), never an error or a side-effect-created empty index.
 
 - Empty `results` array is a valid, normal response — never an error.
 - Auth: single optional bearer token via config/env (`SITEDEX_TOKEN`). Absent
@@ -136,13 +162,23 @@ internal/
 - SQLite, FTS5 (unicode61 tokenizer, `remove_diacritics 2` — Romanian
   diacritics must match unaccented queries: "pantofi" matches "pantofi",
   "PANTOFI", and diacritic variants).
-- Tables: `pages(url PK, title, lang, hash, crawled_at, etag, ...)`,
+- Tables: `pages(url PK, title, lang, hash, crawled_at, etag, seq, ...)`,
   `chunks(page_url, ord, heading_path, text)` + FTS mirror,
   `products(page_url PK, name, price, currency, availability, image,
-  raw_json)` + FTS mirror on name+description.
+  extraction_method, verified_at, raw_json, seq)` + FTS mirror on
+  name+description.
 - Ranking: BM25 (FTS5 built-in) with boosts: title match > product-name
   match > body; exact-phrase bonus; product-type filter when
   `type:"product"`.
+- `seq` (both tables) is a per-index monotonic counter (`seq_counter`
+  table), stamped on every upsert — crawl-time writes to `pages` and
+  fresh-verify writes to `products` alike. It's the cursor behind `GET
+  /v1/sites/{site}/items` (see HTTP API section): an item's effective seq
+  is `max(pages.seq, products.seq)` for its URL, so it resurfaces in a
+  `since_seq` poll whenever either its page or its product data last
+  changed. `verified_at` on `products` is set only by fresh-verify (search
+  package), separately from `crawled_at` on `pages`, which only reflects
+  the last full crawl.
 
 ### Search (`search/`)
 - **Warm path:** query → FTS5 → ranked top N (ms-fast).

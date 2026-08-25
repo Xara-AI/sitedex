@@ -1,5 +1,7 @@
 package index
 
+import "fmt"
+
 // schema is applied on every Open (all statements are idempotent), so
 // opening an existing index.db is just as safe as creating a new one.
 //
@@ -61,9 +63,74 @@ CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
     description,
     tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- seq_counter hands out the monotonically increasing "seq" stamped onto
+-- pages/products rows on every write (see nextSeq in seq.go). It backs the
+-- GET /v1/sites/{site}/items changefeed cursor: a poller passes back the
+-- highest seq it's seen and gets only rows touched since. A dedicated
+-- counter (rather than, say, MAX(seq)+1 read at write time) keeps seq
+-- assignment correct even though pages and products share one sequence
+-- space across two tables.
+CREATE TABLE IF NOT EXISTS seq_counter (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    value INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO seq_counter (id, value) VALUES (1, 0);
 `
 
+// columnAdditions are ALTER TABLE ADD COLUMN statements for columns
+// introduced after a table's initial CREATE TABLE IF NOT EXISTS — those
+// don't retrofit existing databases (this one included: the "seq" and
+// "verified_at" columns below were added post-v0.1.0), so unlike the rest
+// of schema they're applied via ensureColumn, which no-ops when the column
+// is already present.
+var columnAdditions = []struct{ table, column, def string }{
+	{"pages", "seq", "INTEGER NOT NULL DEFAULT 0"},
+	{"products", "seq", "INTEGER NOT NULL DEFAULT 0"},
+	{"products", "verified_at", "TEXT NOT NULL DEFAULT ''"},
+}
+
 func (db *DB) migrate() error {
-	_, err := db.sql.Exec(schema)
+	if _, err := db.sql.Exec(schema); err != nil {
+		return err
+	}
+	for _, c := range columnAdditions {
+		if err := db.ensureColumn(c.table, c.column, c.def); err != nil {
+			return fmt.Errorf("ensure column %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	return nil
+}
+
+// ensureColumn adds column to table if it isn't already there. SQLite has
+// no "ALTER TABLE ... ADD COLUMN IF NOT EXISTS", so this checks
+// PRAGMA table_info first rather than relying on error-string matching.
+func (db *DB) ensureColumn(table, column, def string) error {
+	rows, err := db.sql.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name, typ string
+			notNull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.sql.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def))
 	return err
 }

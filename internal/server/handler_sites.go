@@ -7,11 +7,14 @@ import (
 )
 
 type siteDTO struct {
-	Site          string `json:"site"`
-	Pages         int    `json:"pages"`
-	Chunks        int    `json:"chunks"`
-	Products      int    `json:"products"`
-	LastCrawledAt string `json:"last_crawled_at,omitempty"`
+	Site              string         `json:"site"`
+	Pages             int            `json:"pages"`
+	Chunks            int            `json:"chunks"`
+	Products          int            `json:"products"`
+	LastCrawledAt     string         `json:"last_crawled_at,omitempty"`
+	OldestCrawledAt   string         `json:"oldest_crawled_at,omitempty"`
+	LastVerifiedAt    string         `json:"last_verified_at,omitempty"`
+	ExtractionMethods map[string]int `json:"extraction_methods,omitempty"`
 }
 
 // handleSites serves GET /v1/sites.
@@ -32,6 +35,8 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		out = append(out, siteDTO{
 			Site: site, Pages: stats.PageCount, Chunks: stats.ChunkCount,
 			Products: stats.ProductCount, LastCrawledAt: stats.LastCrawledAt,
+			OldestCrawledAt: stats.OldestCrawledAt, LastVerifiedAt: stats.LastVerifiedAt,
+			ExtractionMethods: stats.ExtractionMethods,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sites": out})

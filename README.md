@@ -109,7 +109,11 @@ POST /v1/search
 
 POST /v1/crawl        {"site":"https://example.com"}   → 202 {"job_id":"job-1"}
 GET  /v1/crawl/{job}                                    → job status + result once done
-GET  /v1/sites                                           → indexed sites, doc counts, last crawl
+GET  /v1/sites                                           → indexed sites, doc counts, last crawl,
+                                                             extraction-method breakdown
+GET  /v1/sites/{site}/items?since_seq=0&limit=200&type=product
+                                                          → what's currently indexed and when each
+                                                             item was last touched — a changefeed, see below
 GET  /healthz                                            → 200 {"status":"ok"}
 GET  /metrics                                             → Prometheus text exposition
 ```
@@ -125,6 +129,14 @@ blocked request. Searching a site that's never been crawled falls back to
 a live on-site search (`source: "site-search"`) instead of empty results,
 and — if `search.auto_index_on_cold_query` is enabled (the default in
 serve mode) — kicks off a background crawl so the next query is warm.
+
+`GET /v1/sites/{site}/items` is how you see what's actually in the index
+without guessing from search results: one entry per crawled URL (product
+fields layered on when the page has extracted product data), each with a
+`seq`. Pass the highest `seq` you've seen back as `since_seq` and you get
+only what changed since — a re-crawl or a fresh-verify — so a caller that
+polls regularly can stay in sync without re-fetching the whole site every
+time. `since_seq=0` (or omitted) returns everything.
 
 ## How extraction works
 

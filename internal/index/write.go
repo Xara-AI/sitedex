@@ -36,9 +36,14 @@ func (db *DB) IndexPage(page PageRecord, chunks []ChunkRecord) error {
 	}
 	defer func() { _ = tx.Rollback() }() // no-op if already committed
 
+	seq, err := nextSeq(tx)
+	if err != nil {
+		return err
+	}
+
 	if _, err := tx.Exec(`
-		INSERT INTO pages (url, title, description, lang, hash, crawled_at, etag, last_modified)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO pages (url, title, description, lang, hash, crawled_at, etag, last_modified, seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url) DO UPDATE SET
 			title = excluded.title,
 			description = excluded.description,
@@ -46,9 +51,10 @@ func (db *DB) IndexPage(page PageRecord, chunks []ChunkRecord) error {
 			hash = excluded.hash,
 			crawled_at = excluded.crawled_at,
 			etag = excluded.etag,
-			last_modified = excluded.last_modified
+			last_modified = excluded.last_modified,
+			seq = excluded.seq
 	`, page.URL, page.Title, page.Description, page.Lang, page.Hash,
-		page.CrawledAt.UTC().Format(time.RFC3339), page.ETag, page.LastModified); err != nil {
+		page.CrawledAt.UTC().Format(time.RFC3339), page.ETag, page.LastModified, seq); err != nil {
 		return fmt.Errorf("upsert page: %w", err)
 	}
 

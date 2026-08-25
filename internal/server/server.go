@@ -1,7 +1,8 @@
 // Package server implements the sitedex HTTP API (POST /v1/search, POST
-// /v1/crawl, GET /v1/crawl/{job}, GET /v1/sites, GET /healthz, GET
-// /metrics) for "sitedex serve" mode, including the fresh-verify response
-// budget, a background re-crawl scheduler, and graceful shutdown.
+// /v1/crawl, GET /v1/crawl/{job}, GET /v1/sites, GET
+// /v1/sites/{site}/items, GET /healthz, GET /metrics) for "sitedex serve"
+// mode, including the fresh-verify response budget, a background re-crawl
+// scheduler, and graceful shutdown.
 //
 // See CLAUDE.md, "HTTP API (serve mode)".
 package server
@@ -104,5 +105,6 @@ func (s *Server) routes(serveCtx context.Context) http.Handler {
 	}))
 	mux.HandleFunc("GET /v1/crawl/{job}", s.withAuth(s.handleCrawlStatus))
 	mux.HandleFunc("GET /v1/sites", s.withAuth(s.handleSites))
+	mux.HandleFunc("GET /v1/sites/{site}/items", s.withAuth(s.handleItems))
 	return s.withLogging(mux)
 }

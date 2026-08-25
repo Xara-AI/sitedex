@@ -166,6 +166,7 @@ func (s *Searcher) verifyTop(ctx context.Context, idx *index.DB, results []Resul
 					Name: v.p.Name, Description: v.p.Description, Price: v.p.Price, HasPrice: v.p.HasPrice,
 					Currency: v.p.Currency, Availability: string(v.p.Availability), Image: v.p.Image,
 					ExtractionMethod: string(v.p.ExtractionMethod), RawJSON: v.p.RawJSON,
+					VerifiedAt: results[v.i].VerifiedAt,
 				})
 				verifiedAny = true
 			}
