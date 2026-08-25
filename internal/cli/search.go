@@ -15,10 +15,11 @@ func runSearch(args []string, stdout, stderr io.Writer) error {
 	site := fs.String("site", "", "indexed site to query, e.g. example.com (required)")
 	query := fs.String("query", "", "search query text (required)")
 	fresh := fs.Bool("fresh", false, "live-verify top results (price/availability) before returning")
+	soft := fs.Bool("soft", false, "if the exact query matches nothing, retry with suffix-relaxed (prefix) matching")
 	limit := fs.Int("limit", 10, "max results to return")
 	configPath := fs.String("config", "", "path to sitedex.yaml (optional)")
 	fs.Usage = func() {
-		_, _ = fmt.Fprint(stderr, "Usage: sitedex search --site example.com --query \"blue nike shoes\" [--fresh] [--limit 10] [--config sitedex.yaml]\n\nFlags:\n")
+		_, _ = fmt.Fprint(stderr, "Usage: sitedex search --site example.com --query \"blue nike shoes\" [--fresh] [--soft] [--limit 10] [--config sitedex.yaml]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -44,7 +45,13 @@ func runSearch(args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintln(stderr, "search: --fresh not implemented yet (target milestone M5); returning index-only results")
 	}
 
-	results, err := search.New(cfg.DataDir, cfg.Crawl.UserAgent).Search(*site, *query, *limit)
+	searcher := search.New(cfg.DataDir, cfg.Crawl.UserAgent)
+	var results []search.Result
+	if *soft {
+		results, err = searcher.SearchSoft(*site, *query, *limit)
+	} else {
+		results, err = searcher.Search(*site, *query, *limit)
+	}
 	if err != nil {
 		return err
 	}

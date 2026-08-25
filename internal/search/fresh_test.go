@@ -143,6 +143,49 @@ func TestSearchFresh_RespectsTimeoutBudget(t *testing.T) {
 	}
 }
 
+// TestSearchFresh_SoftFindsInflectedMatchStrictMisses reproduces the
+// production incident end to end through SearchFresh: an exact query with
+// Romanian grammatical agreement the indexed copy doesn't share ("externalizată"
+// vs. indexed "externalizat") returns nothing without Soft, and the
+// suffix-relaxed match with it — same contract as index.DB.SearchSoft, just
+// exercised through the request path the HTTP API actually uses.
+func TestSearchFresh_SoftFindsInflectedMatchStrictMisses(t *testing.T) {
+	dataDir := t.TempDir()
+	site := hostOf(t, "https://agency.example.com/echipa-marketing")
+	idx, err := index.Open(dataDir, site)
+	if err != nil {
+		t.Fatalf("index.Open: %v", err)
+	}
+	if err := idx.IndexPage(index.PageRecord{
+		URL: "https://agency.example.com/echipa-marketing", Title: "Echipa tehnică de marketing externalizat", CrawledAt: time.Now(),
+	}, []index.ChunkRecord{
+		{Ordinal: 0, HeadingPath: "Echipa tehnică de marketing externalizat", Text: "Serviciul nostru de echipă de marketing externalizat acoperă strategie, conținut și performanță."},
+	}); err != nil {
+		t.Fatalf("IndexPage: %v", err)
+	}
+	_ = idx.Close()
+
+	strict, err := New(dataDir, "sitedex-test").SearchFresh(context.Background(), Request{
+		Site: site, Query: "echipă marketing externalizată", Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("SearchFresh (strict): %v", err)
+	}
+	if len(strict.Results) != 0 {
+		t.Fatalf("strict SearchFresh = %+v, want 0 results", strict.Results)
+	}
+
+	soft, err := New(dataDir, "sitedex-test").SearchFresh(context.Background(), Request{
+		Site: site, Query: "echipă marketing externalizată", Limit: 10, Soft: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchFresh (soft): %v", err)
+	}
+	if len(soft.Results) != 1 || soft.Results[0].URL != "https://agency.example.com/echipa-marketing" {
+		t.Fatalf("soft SearchFresh = %+v, want the echipa-marketing page", soft.Results)
+	}
+}
+
 // seedIndexedProduct opens (creating) an index for the registrable domain
 // of urlStr and indexes a single product page.
 func seedIndexedProduct(t *testing.T, dataDir, urlStr, name string, price float64, availability string) {

@@ -20,6 +20,16 @@ type Request struct {
 	Type  string // ""/"any", "page", or "product"
 	Fresh bool
 
+	// Soft opts into index.DB.SearchSoft instead of SearchFiltered: if the
+	// strict exact-token warm-path query comes back with zero results,
+	// retry with query terms suffix-relaxed into FTS5 prefix matches (see
+	// index/search.go) before giving up. Off by default — exact matching
+	// stays the fast, predictable path; a caller asks for Soft when it's
+	// prepared to accept a looser match, e.g. a conversational agent that
+	// already treats an empty warm result as "try harder," not "no such
+	// page."
+	Soft bool
+
 	// FreshTopN and FreshTimeout configure the fresh-verify path (search.*
 	// config); zero values fall back to CLAUDE.md's documented defaults
 	// (3 results, 2500ms).
@@ -92,7 +102,12 @@ func (s *Searcher) SearchFresh(ctx context.Context, req Request) (Response, erro
 	}
 	defer func() { _ = idx.Close() }()
 
-	results, err := idx.SearchFiltered(req.Query, limit, normalizeType(req.Type))
+	var results []index.Result
+	if req.Soft {
+		results, err = idx.SearchSoft(req.Query, limit, normalizeType(req.Type))
+	} else {
+		results, err = idx.SearchFiltered(req.Query, limit, normalizeType(req.Type))
+	}
 	if err != nil {
 		return Response{}, err
 	}

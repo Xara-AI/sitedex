@@ -84,19 +84,80 @@ func (db *DB) Search(query string, limit int) ([]Result, error) {
 // Search truncates to limit) ensures a type-filtered request still gets a
 // full `limit` results when that many exist.
 func (db *DB) SearchFiltered(query string, limit int, typeFilter string) ([]Result, error) {
-	if limit <= 0 {
-		limit = 10
-	}
 	ftsQuery := sanitizeFTSQuery(query)
 	if ftsQuery == "" {
 		return nil, nil
 	}
+	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
+	return db.searchByFTSQuery(ftsQuery, normalizedQuery, limit, typeFilter)
+}
 
+// minSoftStemLen is the shortest a token may be truncated down to before
+// SearchSoft leaves it as an exact match instead of loosening it into a
+// prefix query — stops a short word like "and" or "și" from turning into
+// a near-open wildcard.
+const minSoftStemLen = 4
+
+// maxSoftSuffixTrim bounds how many trailing runes SearchSoft will try
+// stripping before giving up on a token. 3 covers the common Romanian
+// inflectional endings (gender/number/case agreement — e.g. the indexed
+// "externalizat" vs. a query's "externalizată"/"externalizate") without
+// the query degrading into an open-ended fuzzy search.
+const maxSoftSuffixTrim = 3
+
+// SearchSoft is SearchFiltered with a bounded suffix-relaxation fallback:
+// when the strict exact-token query comes back with zero results, it
+// retries up to maxSoftSuffixTrim times, each round truncating every
+// sufficiently long query token by one more trailing rune and turning it
+// into an FTS5 prefix query. Every term is still required (AND semantics)
+// — this loosens *how* a term is allowed to match, not *whether* it must
+// appear, so a relaxed hit still reflects the whole query rather than a
+// subset of it (unlike dropping a term outright).
+//
+// This exists for grammatically inflected queries: Romanian marks
+// gender/number/case agreement on nouns and adjectives, so a visitor's
+// own wording ("echipă marketing externalizată") can differ from a site's
+// copy ("echipă de marketing externalizat") by a single trailing letter
+// yet match nothing under exact-token search. It's opt-in (not run by
+// SearchFiltered/Search) because prefix matching is inherently looser: a
+// caller should ask for it deliberately, e.g. after a strict search
+// already came back empty.
+func (db *DB) SearchSoft(query string, limit int, typeFilter string) ([]Result, error) {
+	results, err := db.SearchFiltered(query, limit, typeFilter)
+	if err != nil || len(results) > 0 {
+		return results, err
+	}
+
+	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
+	for trim := 1; trim <= maxSoftSuffixTrim; trim++ {
+		relaxedQuery := relaxFTSQuery(query, trim)
+		if relaxedQuery == "" {
+			break
+		}
+		relaxed, err := db.searchByFTSQuery(relaxedQuery, normalizedQuery, limit, typeFilter)
+		if err != nil {
+			return nil, err
+		}
+		if len(relaxed) > 0 {
+			return relaxed, nil
+		}
+	}
+	return results, nil // still empty: nil per "empty results is normal", not an error
+}
+
+// searchByFTSQuery runs ftsQuery (already a complete FTS5 MATCH
+// expression) against products and/or chunks per typeFilter, merges,
+// dedupes (product representation wins — see Result), ranks by Score, and
+// truncates to limit. Shared by SearchFiltered (exact) and SearchSoft
+// (suffix-relaxed) so both go through identical ranking/merge logic.
+func (db *DB) searchByFTSQuery(ftsQuery, normalizedQuery string, limit int, typeFilter string) ([]Result, error) {
+	if limit <= 0 {
+		limit = 10
+	}
 	candidateLimit := limit * candidateFanOut
 	if candidateLimit < 50 {
 		candidateLimit = 50
 	}
-	normalizedQuery := strings.ToLower(strings.Join(tokenize(query), " "))
 
 	var productResults, chunkResults []Result
 	var err error
@@ -281,6 +342,33 @@ func sanitizeFTSQuery(q string) string {
 	parts := make([]string, len(tokens))
 	for i, t := range tokens {
 		parts[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
+// relaxFTSQuery rebuilds q's FTS5 MATCH expression for SearchSoft: each
+// token long enough to spare it (len - trim >= minSoftStemLen) is
+// truncated by trim trailing runes and turned into an unquoted FTS5
+// prefix query ("externalizat*"), so it matches any indexed word sharing
+// that stem — covering the trimmed token itself and any of its own
+// suffixed forms. Tokens too short to trim safely keep their exact
+// quoted form, same as sanitizeFTSQuery. Unquoted is safe here because
+// tokenize already restricted every token to letters/digits, so there's
+// nothing to escape and no FTS5 operator can sneak in. Returns "" if q
+// tokenizes to nothing.
+func relaxFTSQuery(q string, trim int) string {
+	tokens := tokenize(q)
+	if len(tokens) == 0 {
+		return ""
+	}
+	parts := make([]string, len(tokens))
+	for i, t := range tokens {
+		r := []rune(t)
+		if len(r)-trim >= minSoftStemLen {
+			parts[i] = string(r[:len(r)-trim]) + "*"
+		} else {
+			parts[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
+		}
 	}
 	return strings.Join(parts, " ")
 }

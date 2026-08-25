@@ -206,6 +206,51 @@ func TestServer_SearchTypeFilter(t *testing.T) {
 	}
 }
 
+func TestServer_SearchSoftFindsInflectedMatchStrictMisses(t *testing.T) {
+	dataDir := t.TempDir()
+	idx, err := index.Open(dataDir, "agency.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.IndexPage(index.PageRecord{
+		URL: "https://agency.example.com/echipa-marketing", Title: "Echipa tehnică de marketing externalizat", CrawledAt: time.Now(),
+	}, []index.ChunkRecord{
+		{Ordinal: 0, HeadingPath: "Echipa tehnică de marketing externalizat", Text: "Serviciul nostru de echipă de marketing externalizat acoperă strategie, conținut și performanță."},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	base, stop := testServer(t, testConfig(dataDir))
+	defer stop()
+
+	post := func(body string) searchResponse {
+		t.Helper()
+		resp, err := http.Post(base+"/v1/search", "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatalf("POST /v1/search: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out searchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	strict := post(`{"site":"agency.example.com","query":"echipă marketing externalizată"}`)
+	if len(strict.Results) != 0 {
+		t.Fatalf("strict results = %+v, want 0 (soft defaults to false)", strict.Results)
+	}
+
+	soft := post(`{"site":"agency.example.com","query":"echipă marketing externalizată","soft":true}`)
+	if len(soft.Results) != 1 || soft.Results[0].URL != "https://agency.example.com/echipa-marketing" {
+		t.Fatalf("soft results = %+v, want the echipa-marketing page", soft.Results)
+	}
+}
+
 func TestServer_CrawlTriggerAndStatus(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })

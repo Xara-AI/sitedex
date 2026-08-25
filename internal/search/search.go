@@ -51,6 +51,23 @@ func (s *Searcher) Search(site, query string, limit int) ([]Result, error) {
 	return results, nil
 }
 
+// SearchSoft is Search with the suffix-relaxation fallback opted in (see
+// index.DB.SearchSoft): only takes effect when the strict query would
+// otherwise come back empty.
+func (s *Searcher) SearchSoft(site, query string, limit int) ([]Result, error) {
+	idx, err := s.openSite(site)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = idx.Close() }()
+
+	results, err := idx.SearchSoft(query, limit, "")
+	if err != nil {
+		return nil, fmt.Errorf("search: %w", err)
+	}
+	return results, nil
+}
+
 // openSite opens site's index, erroring clearly if it's never been
 // crawled rather than silently creating an empty index.
 func (s *Searcher) openSite(site string) (*index.DB, error) {

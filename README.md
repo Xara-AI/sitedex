@@ -82,7 +82,7 @@ state). Logs are structured JSON lines to stdout — `journalctl -u sitedex
 ```
 sitedex crawl   --site https://example.com [--config sitedex.yaml]
 sitedex export  --site example.com --format md|jsonl --out ./kb/ [--config sitedex.yaml]
-sitedex search  --site example.com --query "blue nike shoes" [--fresh] [--limit 10] [--config sitedex.yaml]
+sitedex search  --site example.com --query "blue nike shoes" [--fresh] [--soft] [--limit 10] [--config sitedex.yaml]
 sitedex serve   [--addr :8080] [--config sitedex.yaml]
 sitedex sites   [--config sitedex.yaml]
 sitedex version
@@ -97,7 +97,7 @@ the natural override surface for containers.
 
 ```
 POST /v1/search
-  {"site":"example.com","query":"blue nike shoes","limit":10,"fresh":true,"type":"product|page|any"}
+  {"site":"example.com","query":"blue nike shoes","limit":10,"fresh":true,"type":"product|page|any","soft":false}
 → 200 {"results":[{
      "title": "...", "url": "...", "type": "product|page",
      "price": 199.90, "currency": "RON", "availability": "in_stock|out_of_stock|unknown",
@@ -129,6 +129,11 @@ blocked request. Searching a site that's never been crawled falls back to
 a live on-site search (`source: "site-search"`) instead of empty results,
 and — if `search.auto_index_on_cold_query` is enabled (the default in
 serve mode) — kicks off a background crawl so the next query is warm.
+`soft:true` opts into a bounded fallback for grammatically inflected
+queries: if the exact-token search comes back empty, it retries with
+query terms suffix-relaxed into prefix matches (e.g. a query ending in
+an inflected "-ă" still matches an indexed base form) before giving up.
+Off by default; `sitedex search --soft` is the CLI equivalent.
 
 `GET /v1/sites/{site}/items` is how you see what's actually in the index
 without guessing from search results: one entry per crawled URL (product

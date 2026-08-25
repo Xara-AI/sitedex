@@ -15,6 +15,11 @@ type searchRequest struct {
 	Limit int    `json:"limit"`
 	Fresh bool   `json:"fresh"`
 	Type  string `json:"type"`
+
+	// Soft opts into suffix-relaxed (prefix) matching as a fallback when
+	// the exact query matches nothing — see search.Request.Soft. Off by
+	// default: exact matching is the fast, predictable path.
+	Soft bool `json:"soft"`
 }
 
 // searchResult mirrors search.Result (== index.Result) as wire JSON,
@@ -86,7 +91,7 @@ func (s *Server) handleSearch(serveCtx context.Context, w http.ResponseWriter, r
 	}
 
 	resp, err := s.searcher.SearchFresh(r.Context(), search.Request{
-		Site: req.Site, Query: req.Query, Limit: limit, Type: req.Type, Fresh: req.Fresh,
+		Site: req.Site, Query: req.Query, Limit: limit, Type: req.Type, Fresh: req.Fresh, Soft: req.Soft,
 		FreshTopN:    s.cfg.Search.FreshTopN,
 		FreshTimeout: time.Duration(s.cfg.Search.FreshTimeoutMS) * time.Millisecond,
 	})

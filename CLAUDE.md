@@ -37,7 +37,7 @@ module path, and the user-agent string.
 ```
 sitedex crawl   --site https://example.com [--config sitedex.yaml]   # full crawl -> markdown + index
 sitedex export  --site example.com --format md|jsonl --out ./kb/     # dump the knowledge base
-sitedex search  --site example.com --query "blue nike shoes" [--fresh] [--limit 10]
+sitedex search  --site example.com --query "blue nike shoes" [--fresh] [--soft] [--limit 10]
 sitedex serve   [--addr :8080]                                       # long-running HTTP daemon
 sitedex sites                                                         # list indexed sites + stats
 sitedex version
@@ -54,7 +54,7 @@ sitedex version
 
 ```
 POST /v1/search
-  {"site":"example.com","query":"blue nike shoes","limit":10,"fresh":true,"type":"product|page|any"}
+  {"site":"example.com","query":"blue nike shoes","limit":10,"fresh":true,"type":"product|page|any","soft":false}
 → 200 {"results":[{
      "title": "...", "url": "...", "type": "product|page",
      "price": 199.90, "currency": "RON", "availability": "in_stock|out_of_stock|unknown",
@@ -96,6 +96,18 @@ GET  /healthz                                                → 200 ok
   returns an empty `items` array (and echoes back `since_seq` as
   `next_since_seq`), never an error or a side-effect-created empty index.
 
+- `soft` (default `false`): opt-in fallback for grammatically inflected
+  queries. If the exact-token warm-path query matches nothing, retry with
+  query terms suffix-relaxed into FTS5 prefix matches (up to 3 rounds,
+  trimming one more trailing rune each time; terms stay required — AND
+  semantics — only *how* a term matches loosens). Exists because exact
+  tokenization is brittle against agreement inflection (Romanian
+  adjectives/nouns mark gender/number/case: a visitor's "externalizată"
+  won't match a site's own "externalizat"). Off by default so the fast,
+  predictable exact path stays the default; callers that want a softer
+  search (e.g. an assistant that treats an empty warm result as "try
+  harder," not "no such page") opt in explicitly. `sitedex search --soft`
+  is the CLI equivalent. See `index.DB.SearchSoft`.
 - Empty `results` array is a valid, normal response — never an error.
 - Auth: single optional bearer token via config/env (`SITEDEX_TOKEN`). Absent
   = open (localhost/LXC-internal use case). Keep it this simple.
@@ -190,7 +202,10 @@ internal/
   future ALTER-added column doesn't need the same treatment.)
 
 ### Search (`search/`)
-- **Warm path:** query → FTS5 → ranked top N (ms-fast).
+- **Warm path:** query → FTS5 → ranked top N (ms-fast). Exact-token AND
+  match by default; `soft:true` (see API section) opts into a bounded
+  suffix-relaxation retry when that comes back empty, for grammatically
+  inflected queries.
 - **Fresh verify (`fresh:true`):** concurrently re-fetch top `fresh_top_n`
   (default 3) result URLs with per-request timeout (default 1500 ms),
   re-run product extraction, update price/availability in response + index.
